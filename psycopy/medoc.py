@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 import socket
-import struct
 import time
 from enum import IntEnum
 from typing import Any
@@ -85,7 +84,7 @@ class MedocClient:
         "high": 87,
     }
     GET_STATUS = 0
-    POLL_STATUS = 192  # 0xC0 – poll temperature / device state
+    GET_STATUS = 0       # temperature / device-state poll
     SELECT_TP = 1
     START = 2
     INTER_CMD_DELAY_SEC = 0.5
@@ -401,40 +400,41 @@ class MedocClient:
     def poll_status(self) -> dict[str, Any]:
         """Poll Medoc device for current temperature and state.
 
-        Sends command 192 (0xC0) and parses the framed response.
-        Must be called while the socket is already connected.
+        Sends command 0 (GET_STATUS) using the framed binary protocol and
+        parses the response per the MMS specification.
 
         Returns:
             Dict with keys:
                 - response_code (int)
                 - temperature_celsius (float)
                 - device_state (int)
-                - test_state (int | None)
+                - test_state (int)
                 - raw_bytes (bytes)
 
         Raises:
-            MedocResponseError: If the response is too short or indicates failure.
+            MedocResponseError: If the response is too short.
             RuntimeError: If socket is not connected.
         """
         raw_response = self._send_framed_command(
-            self.POLL_STATUS,
-            tag="POLL_STATUS",
+            self.GET_STATUS,
+            tag="GET_STATUS",
         )
         return self._parse_status(raw_response)
 
     def _parse_status(self, raw_response: bytes) -> dict[str, Any]:
-        """Parse a status/poll response into a dictionary.
+        """Parse a GET_STATUS response into a dictionary.
 
-        Expected body layout (after 4-byte length header):
-          bytes 0-3  : timestamp
-          byte  4    : command_id
-          bytes 5-6  : reserved / padding
-          bytes 7-8  : response code (big-endian)
-          bytes 9-12 : temperature as little-endian float
-          byte  13   : device_state
-          byte  14   : test_state
+        Frame layout (after the 4-byte big-endian length header):
+          bytes 0-3   : timestamp
+          byte  4     : command_id
+          byte  5     : system_state
+          byte  6     : test_state
+          bytes 7-8   : response code (big-endian)
+          bytes 9-12  : tms (big-endian)
+          bytes 13-14 : temperature as signed little-endian 16-bit int / 100
+          byte  17    : ttl (if present)
         """
-        if len(raw_response) < 19:  # 4 header + 15 body minimum
+        if len(raw_response) < 16:  # 4 header + 12 body minimum
             raise MedocResponseError(
                 response_code=-1,
                 raw_bytes=raw_response,
@@ -442,15 +442,39 @@ class MedocClient:
             )
 
         body = raw_response[4:]
-        response_code = int.from_bytes(body[7:9], "big")
-        temperature = struct.unpack("<f", body[9:13])[0]
-        device_state = body[13]
-        test_state = body[14] if len(body) > 14 else None
+        off = 0
+
+        timestamp = int.from_bytes(body[off : off + 4], "big")
+        off += 4
+
+        command_id = body[off]
+        off += 1
+
+        system_state = body[off]
+        off += 1
+
+        test_state = body[off]
+        off += 1
+
+        response_code = int.from_bytes(body[off : off + 2], "big")
+        off += 2
+
+        tms = int.from_bytes(body[off : off + 4], "big")
+        off += 4
+
+        temperature = int.from_bytes(body[off : off + 2], "little", signed=True) / 100.0
+        off += 2
+
+        ttl = body[off + 3] if off + 3 < len(body) else 0
 
         return {
+            "timestamp": timestamp,
+            "command_id": command_id,
             "response_code": response_code,
             "temperature_celsius": temperature,
-            "device_state": device_state,
+            "device_state": system_state,
             "test_state": test_state,
+            "tms": tms,
+            "ttl": ttl,
             "raw_bytes": raw_response,
         }
