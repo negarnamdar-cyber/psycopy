@@ -881,41 +881,39 @@ class MedocExperiment:
                 go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
             )
 
-            try:
-                for block_num, block_trials in enumerate(self.trials):
-                    vowel_client: MedocClient | None = None
-                    if self.medoc_client is not None:
-                        self.medoc_client.connect()
-                        try:
-                            self.medoc_client.send_unified_program()
-                            self.logger.info(
-                                "Medoc unified program 11000000 started for block %d",
-                                block_num,
-                            )
-                        except Exception as exc:
-                            self.logger.warning(
-                                "Failed to start unified Medoc program for block %d: %s",
-                                block_num,
-                                exc,
-                            )
-                        vowel_client = self.medoc_client
+            for block_num, block_trials in enumerate(self.trials):
+                vowel_client: MedocClient | None = None
+                if self.medoc_client is not None:
+                    self.medoc_client.connect()
+                    try:
+                        self.medoc_client.send_unified_program()
+                        self.logger.info(
+                            "Medoc unified program 11000000 started for block %d",
+                            block_num,
+                        )
+                    except Exception as exc:
+                        self.logger.warning(
+                            "Failed to start unified Medoc program for block %d: %s",
+                            block_num,
+                            exc,
+                        )
+                    vowel_client = self.medoc_client
 
-                    self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
-                    self.run_set(block_num, block_trials, client=vowel_client)
+                self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
+                self.run_set(block_num, block_trials, client=vowel_client)
 
-                    # Disconnect Medoc before the break so the pain cycle stops
-                    if vowel_client is not None:
-                        try:
-                            vowel_client.disconnect()
-                            self.logger.info("Medoc disconnected before break")
-                        except Exception as exc:
-                            self.logger.warning("Error disconnecting Medoc: %s", exc)
-                        vowel_client = None
+                # Disconnect Medoc before the break so the pain cycle stops
+                if vowel_client is not None:
+                    try:
+                        vowel_client.disconnect()
+                        self.logger.info("Medoc disconnected before break")
+                    except Exception as exc:
+                        self.logger.warning("Error disconnecting Medoc: %s", exc)
 
-                    # Show 1-minute break between blocks (except after last block)
-                    if block_num < len(self.trials) - 1:
-                        self.logger.info("Starting 1-minute break after block %d", block_num + 1)
-                        self._show_break_screen(BLOCK_BREAK_SEC)
+                # Show 1-minute break between blocks (except after last block)
+                if block_num < len(self.trials) - 1:
+                    self.logger.info("Starting 1-minute break after block %d", block_num + 1)
+                    self._show_break_screen(BLOCK_BREAK_SEC)
 
             total_trials = sum(len(block) for block in self.trials)
             self.event_logger.log(
