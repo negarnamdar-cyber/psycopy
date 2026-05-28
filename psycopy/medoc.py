@@ -4,12 +4,15 @@ Uses the MMS framed protocol:
   Frame = [4-byte big-endian length] + [body]
   Body  = [4-byte timestamp BE] + [1-byte command_id] + [parameters / response data]
 
-Status response body layout (after timestamp + command_id):
-  bytes 5-6 : padding / reserved
-  bytes 7-8 : response code (big-endian)
-  bytes 9-12: temperature as little-endian IEEE-754 float
-  byte  13  : device_state
-  byte  14  : test_state
+GET_STATUS response body layout (after 4-byte length header):
+  bytes 0-3   : timestamp (big-endian)
+  byte  4     : command_id
+  byte  5     : system_state
+  byte  6     : test_state
+  bytes 7-8   : response code (big-endian)
+  bytes 9-12  : tms (big-endian)
+  bytes 13-14 : temperature as signed little-endian 16-bit int / 100
+  byte  17    : ttl (if present)
 """
 
 from __future__ import annotations
@@ -345,17 +348,56 @@ class MedocClient:
             raise
 
     def send_unified_program(self) -> None:
-        """Send the unified 11000000 program as raw 4-byte big-endian binary.
+        """Send the unified program via SELECT_TP + START.
 
         Keeps the socket open so the caller can continue polling status.
         Must be called while the socket is already connected.
-        """
-        if self._sock is None:
-            raise RuntimeError("Socket not connected - call connect() first")
 
+        Raises:
+            MedocResponseError: If SELECT_TP or START fails.
+            RuntimeError: If socket is not connected.
+        """
         program_code = self.PROGRAM_CODES["unified"]
-        self._sock.sendall(program_code.to_bytes(4, "big"))
-        logger.info("Sent unified program %d as raw binary", program_code)
+        try:
+            select_response = self._send_framed_command(
+                self.SELECT_TP,
+                param_bytes=self._u32be(socket.htonl(program_code)),
+                tag=f"SELECT_TP unified (A)",
+            )
+            select_rc = self._parse_response_code(select_response)
+            if select_rc != MedocResponseCode.OK:
+                time.sleep(self.INTER_CMD_DELAY_SEC)
+                select_response = self._send_framed_command(
+                    self.SELECT_TP,
+                    param_bytes=self._u32be(program_code),
+                    tag=f"SELECT_TP unified (B)",
+                )
+                select_rc = self._parse_response_code(select_response)
+            if select_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=select_rc,
+                    raw_bytes=select_response,
+                    message=f"SELECT_TP failed for unified with code {select_rc}",
+                )
+
+            time.sleep(self.INTER_CMD_DELAY_SEC)
+
+            start_response = self._send_framed_command(
+                self.START,
+                tag="START unified",
+            )
+            start_rc = self._parse_response_code(start_response)
+            if start_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=start_rc,
+                    raw_bytes=start_response,
+                    message=f"START failed for unified with code {start_rc}",
+                )
+        except socket.timeout:
+            raise MedocTimeoutError(
+                self._config.medoc_timeout,
+                "Timeout waiting for Medoc framed response during unified program start",
+            ) from None
 
     def poll_status(self) -> dict[str, Any]:
         """Poll Medoc device for current temperature and state.
