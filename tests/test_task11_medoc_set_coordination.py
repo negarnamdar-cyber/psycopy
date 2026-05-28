@@ -1,8 +1,9 @@
 """Test suite for Task 11: MedocExperiment set coordination.
 
 Tests:
-- run_set() executes 12 trials
-- run() executes 8 sets
+- run_set() executes 6 trials per block
+- run() executes 5 blocks
+- 1-minute break between blocks
 - User abort saves data
 """
 
@@ -64,6 +65,7 @@ def mock_ui():
     ui.show_instructions = MagicMock()
     ui.show_completion = MagicMock()
     ui.wait_for_space = MagicMock()
+    ui.show_set_waiting_screen = MagicMock()
     ui.close = MagicMock()
     ui.instruction_text = MagicMock()
     ui.win = MagicMock()
@@ -71,6 +73,8 @@ def mock_ui():
     ui.exp_clock = MagicMock()
     ui.exp_clock.getTime = MagicMock(return_value=0.0)
     ui.help_text = MagicMock()
+    ui.wait = MagicMock()
+    ui.apply_state = MagicMock()
     return ui
 
 
@@ -117,10 +121,10 @@ def mock_time():
         yield
 
 
-class TestRunSetTwelveTrials:
-    """QA Scenario 1: Set executes 12 trials."""
+class TestRunSetSixTrials:
+    """QA Scenario 1: Set executes 6 trials."""
 
-    def test_run_set_executes_twelve_trials(
+    def test_run_set_executes_six_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -130,7 +134,7 @@ class TestRunSetTwelveTrials:
         mock_logger,
         mock_time,
     ):
-        """Test that run_set() executes exactly 12 trials."""
+        """Test that run_set() executes exactly 6 trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -156,15 +160,15 @@ class TestRunSetTwelveTrials:
             exp = MedocExperiment(config)
             exp.audio = mock_audio
 
-            # Run first set
+            # Run first block
             trials = exp.trials[0]
             exp.run_set(0, trials)
 
-            # Verify 12 trials were logged
+            # Verify 6 trials were logged
             trial_count = len(exp.trial_logger.trials)
-            assert trial_count == 12, f"Expected 12 trials, got {trial_count}"
+            assert trial_count == 6, f"Expected 6 trials, got {trial_count}"
 
-    def test_run_set_correct_trial_distribution(
+    def test_run_set_all_vowel_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -174,7 +178,7 @@ class TestRunSetTwelveTrials:
         mock_logger,
         mock_time,
     ):
-        """Test that run_set() has correct 6V+6S distribution."""
+        """Test that run_set() produces only vowel trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -200,23 +204,23 @@ class TestRunSetTwelveTrials:
             exp = MedocExperiment(config)
             exp.audio = mock_audio
 
-            # Run first set
+            # Run first block
             trials = exp.trials[0]
             exp.run_set(0, trials)
 
-            # Verify trial distribution
+            # Verify all trials are vowel
             task_types = [t.task_type for t in exp.trial_logger.trials]
             vowel_count = task_types.count("vowel")
             sentence_count = task_types.count("sentence")
 
             assert vowel_count == 6, f"Expected 6 vowel trials, got {vowel_count}"
-            assert sentence_count == 6, f"Expected 6 sentence trials, got {sentence_count}"
+            assert sentence_count == 0, f"Expected 0 sentence trials, got {sentence_count}"
 
 
-class TestRunEightSets:
-    """QA Scenario 2: Full experiment 8 sets."""
+class TestRunFiveBlocks:
+    """QA Scenario 2: Full experiment 5 blocks."""
 
-    def test_run_sets_waiting_screen_between_sets(
+    def test_run_blocks_with_breaks(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -226,7 +230,7 @@ class TestRunEightSets:
         mock_logger,
         mock_time,
     ):
-        """Test that waiting screen is shown between sets (7 times for 8 sets)."""
+        """Test that 1-minute break is shown between blocks (4 times for 5 blocks)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -252,15 +256,21 @@ class TestRunEightSets:
             exp = MedocExperiment(config)
             exp.audio = mock_audio
 
+            # Mock _show_break_screen to avoid actual waiting
+            break_calls = []
+            def track_break(duration):
+                break_calls.append(duration)
+            exp._show_break_screen = track_break
+
             # Run full experiment
             exp.run()
 
-            # Verify waiting screen was called 7 times (between 8 sets)
-            assert mock_ui.wait_for_space.call_count == 7, (
-                f"Expected 7 waiting screen calls (between 8 sets), got {mock_ui.wait_for_space.call_count}"
+            # Verify break was called 4 times (between 5 blocks)
+            assert len(break_calls) == 4, (
+                f"Expected 4 break calls (between 5 blocks), got {len(break_calls)}"
             )
 
-    def test_run_full_experiment_ninety_six_trials(
+    def test_run_full_experiment_thirty_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -270,7 +280,7 @@ class TestRunEightSets:
         mock_logger,
         mock_time,
     ):
-        """Test that run() executes all 96 trials (8 sets x 12 trials)."""
+        """Test that run() executes all 30 trials (5 blocks x 6 trials)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -296,12 +306,15 @@ class TestRunEightSets:
             exp = MedocExperiment(config)
             exp.audio = mock_audio
 
+            # Mock _show_break_screen to speed up tests
+            exp._show_break_screen = MagicMock()
+
             # Run full experiment
             exp.run()
 
-            # Verify total trials = 8 sets x 12 trials = 96
+            # Verify total trials = 5 blocks x 6 trials = 30
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 96, f"Expected 96 trials, got {total_trials}"
+            assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
 
 
 class TestUserAbortSavesData:
@@ -348,7 +361,10 @@ class TestUserAbortSavesData:
             save_spy = MagicMock()
             exp.save_all_loggers = save_spy
 
-            # Patch run_trial to raise UserAbort on trial 5 (second set, trial 5)
+            # Mock _show_break_screen
+            exp._show_break_screen = MagicMock()
+
+            # Patch run_trial to raise UserAbort on trial 5 (second block, trial 5)
             original_run_trial = exp.run_trial
             call_count = [0]
 

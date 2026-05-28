@@ -32,6 +32,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run practice mode and attempt to connect to Medoc if available.",
     )
+    parser.add_argument(
+        "--speech",
+        action="store_true",
+        help="Run speech interview mode with thermal stimulation (free speech until shutdown).",
+    )
     parser.add_argument("--participant-id", default="001", help="Participant identifier.")
     parser.add_argument("--session-id", default="01", help="Session identifier.")
     parser.add_argument("--random-seed", default="", help="Optional random seed for reproducibility.")
@@ -67,6 +72,8 @@ def build_config(args: argparse.Namespace) -> ExperimentConfig:
         mode = ExperimentMode.PRACTICE_NO_MEDOC
     elif args.practice_with_medoc:
         mode = ExperimentMode.PRACTICE_WITH_MEDOC
+    elif args.speech:
+        mode = ExperimentMode.SPEECH
     elif args.normal:
         mode = ExperimentMode.NORMAL
     else:
@@ -106,7 +113,10 @@ def main() -> int:
     print(config.to_dict())
 
     experiment = MedocExperiment(config)
-    print("Experiment initialized. Press ESC anytime to abort.")
+    if config.mode == ExperimentMode.SPEECH:
+        print("Experiment initialized. Speech mode: press Q + 12345 to stop gracefully.")
+    else:
+        print("Experiment initialized. Press Q + 12345 for graceful shutdown.")
 
     try:
         experiment.run()

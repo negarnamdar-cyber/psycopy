@@ -7,15 +7,19 @@ from __future__ import annotations
 INSTRUCTIONS_MAIN = """
 INSTRUCTIONS
 
-You will read sentences aloud during this experiment.
+Each trial lasts 60 seconds.
+The screen will alternate between RED (STOP) and GREEN (GO).
+
+You will sustain a vowel sound ('Ahh') during GO periods.
 
 IMPORTANT RULES:
 
-  • Speak ONLY when the screen is GREEN and shows "GO"
+  • Speak 'Ahh' ONLY when the screen is GREEN and shows "GO"
   • Stop speaking immediately when the screen turns RED and shows "STOP"
-  • Remain silent until the screen turns GREEN again
+  • Remain silent during STOP periods
+  • The screen will switch multiple times within each 60-second trial
 
-The screen will switch between GO and STOP multiple times during each trial.
+There will be 5 blocks of 6 trials, with a 1-minute break between blocks.
 
 Press SPACE to begin the experiment.
 """
@@ -23,10 +27,11 @@ Press SPACE to begin the experiment.
 INSTRUCTIONS_SEGMENTATION_OFF = """
 INSTRUCTIONS
 
-You will read sentences aloud during this experiment.
-
+Each trial lasts 60 seconds.
 The screen will remain GREEN throughout each trial.
-Speak continuously until you finish the sentence.
+Speak 'Ahh' continuously.
+
+There will be 5 blocks of 6 trials, with a 1-minute break between blocks.
 
 Press SPACE to begin the experiment.
 """
@@ -34,10 +39,11 @@ Press SPACE to begin the experiment.
 INSTRUCTIONS_VOWEL = """
 VOWEL TASK INSTRUCTIONS
 
-You will sustain a vowel sound during this task.
+Each trial lasts 60 seconds.
 
-  • When the screen is GREEN ("GO"): Say "Ahh" and hold the sound
-  • When the screen turns RED ("STOP"): Stop immediately and stay silent
+  • When the screen is GREEN ("GO"): Say "Ahh" and hold
+  • When the screen turns RED ("STOP"): Stop immediately
+  • The screen will switch multiple times within each trial
 
 Press SPACE to begin.
 """
@@ -48,7 +54,7 @@ REACTION TIME TASK INSTRUCTIONS
 A fixation cross (+) will appear on screen.
 
   • Wait for the cross to turn GREEN
-  • When you see "PRESS!" — press SPACE as fast as you can
+  • When you see "PRESS!" -- press SPACE as fast as you can
   • Try to respond as quickly as possible
 
 Press SPACE to begin.
@@ -81,12 +87,12 @@ UI_CONSTANTS = {
     "text_height_normal": 0.05,
     "text_height_large": 0.07,
     "text_height_title": 0.09,
-    
+
     # Spacing
     "line_spacing": 0.08,
     "paragraph_spacing": 0.12,
     "section_spacing": 0.2,
-    
+
     # Colors (RGB normalized -1 to 1)
     "color_text_primary": (0.9, 0.9, 0.9),
     "color_text_secondary": (0.6, 0.6, 0.6),
@@ -95,7 +101,7 @@ UI_CONSTANTS = {
     "color_stop": (0.7, -0.6, -0.5),
     "color_warning": (0.9, 0.5, -0.2),
     "color_success": (-0.5, 0.7, -0.4),
-    
+
     # Timing
     "fixation_duration_min": 0.4,
     "fixation_duration_max": 0.6,
@@ -106,17 +112,17 @@ UI_CONSTANTS = {
 
 def format_instructions(text: str, width: int = 70) -> str:
     """Format instructions with proper line wrapping.
-    
+
     Args:
         text: Raw instruction text
         width: Maximum line width
-        
+
     Returns:
         Formatted text ready for display
     """
     lines = text.strip().split("\n")
     formatted = []
-    
+
     for line in lines:
         if line.strip() == "":
             formatted.append("")
@@ -137,16 +143,16 @@ def format_instructions(text: str, width: int = 70) -> str:
                     current = word
             if current:
                 formatted.append(current)
-    
+
     return "\n".join(formatted)
 
 
 def get_instructions(segmentation_enabled: bool) -> str:
     """Get the appropriate instructions based on configuration.
-    
+
     Args:
         segmentation_enabled: Whether GO/STOP segmentation is enabled
-        
+
     Returns:
         Formatted instruction text
     """

@@ -17,10 +17,11 @@ _IPV4_REGEX = re.compile(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$")
 
 class ExperimentMode(Enum):
     """Experiment execution mode."""
-    
+
     NORMAL = "normal"  # Full experiment with Medoc
     PRACTICE_NO_MEDOC = "practice_no_medoc"  # Practice mode without Medoc device
     PRACTICE_WITH_MEDOC = "practice_with_medoc"  # Practice mode with Medoc device
+    SPEECH = "speech"  # Free speech interview with thermal stimulation
 
 
 def _validate_medoc_config(medoc_ip: str, medoc_port: int, medoc_timeout: float) -> None:
@@ -115,7 +116,7 @@ def show_startup_dialog() -> ExperimentConfig:
     # Main configuration dialog
     dialog = gui.Dlg(title="Speech Gating Experiment - Setup")
     dialog.addText("=" * 50)
-    dialog.addText("Medoc-Only Speech Gating Experiment")
+    dialog.addText("Vowel Speech Gating Experiment")
     dialog.addText("=" * 50)
     dialog.addText("")
 
@@ -129,7 +130,12 @@ def show_startup_dialog() -> ExperimentConfig:
     dialog.addText("Experiment Mode")
     dialog.addField(
         "Mode:",
-        choices=["Normal (Full experiment)", "Practice (no Medoc device)", "Practice (with Medoc device)"],
+        choices=[
+            "Normal (Full experiment)",
+            "Practice (no Medoc device)",
+            "Practice (with Medoc device)",
+            "Speech interview (free speech + thermal)",
+        ],
         initial="Normal (Full experiment)",
     )
     dialog.addText("")
@@ -188,9 +194,12 @@ def show_startup_dialog() -> ExperimentConfig:
     medoc_timeout = float(values[8]) if values[8] else 5.0
 
     # Determine mode
-    if "no Medoc" in mode_str or "no medoc" in mode_str.lower():
+    mode_str_lower = mode_str.lower()
+    if "speech" in mode_str_lower:
+        mode = ExperimentMode.SPEECH
+    elif "no medoc" in mode_str_lower:
         mode = ExperimentMode.PRACTICE_NO_MEDOC
-    elif "with Medoc" in mode_str or "with medoc" in mode_str.lower():
+    elif "with medoc" in mode_str_lower:
         mode = ExperimentMode.PRACTICE_WITH_MEDOC
     else:
         mode = ExperimentMode.NORMAL
@@ -198,7 +207,7 @@ def show_startup_dialog() -> ExperimentConfig:
     # MedocConfig is always created, but require_connection depends on mode
     # - NORMAL: require_connection=True (must connect)
     # - PRACTICE_NO_MEDOC: medoc_config=None (no Medoc at all)
-    # - PRACTICE_WITH_MEDOC: require_connection=False (try to connect, but don't fail)
+    # - PRACTICE_WITH_MEDOC / SPEECH: require_connection=False (try to connect, but don't fail)
     if mode == ExperimentMode.PRACTICE_NO_MEDOC:
         medoc_config = None
     else:

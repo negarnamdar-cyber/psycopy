@@ -318,91 +318,131 @@ class TestInvalidResponseHandling:
 
 
 class TestTrialGenerator:
-    """Tests for trial randomization (from Task 8)."""
+    """Tests for trial randomization."""
 
-    def test_generate_trials_creates_8_sets(self):
+    def test_generate_trials_creates_5_blocks(self):
         from random import Random
 
         rng = Random(42)
         trials = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
-        assert len(trials) == 8
-        for set_trials in trials:
-            assert len(set_trials) == 12
+        assert len(trials) == 5
+        for block_trials in trials:
+            assert len(block_trials) == 6
 
-    def test_trial_distribution_per_set(self):
+    def test_trial_distribution_per_block(self):
         from random import Random
 
         rng = Random(42)
         trials = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
-        for set_idx, set_trials in enumerate(trials):
-            vowel_count = sum(1 for t in set_trials if t.task_type == "vowel")
-            sentence_count = sum(1 for t in set_trials if t.task_type == "sentence")
+        for block_idx, block_trials in enumerate(trials):
+            vowel_count = sum(1 for t in block_trials if t.task_type == "vowel")
+            sentence_count = sum(1 for t in block_trials if t.task_type == "sentence")
 
-            assert vowel_count == 6, f"Set {set_idx}: expected 6 vowel, got {vowel_count}"
-            assert sentence_count == 6, f"Set {set_idx}: expected 6 sentence, got {sentence_count}"
+            assert vowel_count == 6, f"Block {block_idx}: expected 6 vowel, got {vowel_count}"
+            assert sentence_count == 0, f"Block {block_idx}: expected 0 sentence, got {sentence_count}"
 
-            baseline_count = sum(1 for t in set_trials if t.pain_condition == "baseline")
-            low_count = sum(1 for t in set_trials if t.pain_condition == "low")
-            medium_count = sum(1 for t in set_trials if t.pain_condition == "medium")
-            high_count = sum(1 for t in set_trials if t.pain_condition == "high")
-
-            assert baseline_count == 3, f"Set {set_idx}: expected 3 baseline, got {baseline_count}"
-            assert low_count == 3, f"Set {set_idx}: expected 3 low, got {low_count}"
-            assert medium_count == 3, f"Set {set_idx}: expected 3 medium, got {medium_count}"
-            assert high_count == 3, f"Set {set_idx}: expected 3 high, got {high_count}"
-
-    def test_stop_trial_distribution(self):
+    def test_pain_distribution_across_all(self):
         from random import Random
 
         rng = Random(42)
         trials = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
-        total_stop = sum(sum(1 for t in set_trials if t.is_stop_trial) for set_trials in trials)
-        assert total_stop == 24, f"Expected 24 stop trials, got {total_stop}"
+        all_pain = [t.pain_condition for block in trials for t in block]
+        xlow_count = all_pain.count("xlow")
+        low_count = all_pain.count("low")
+        medium_count = all_pain.count("medium")
+        high_count = all_pain.count("high")
+
+        assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
+        assert low_count == 8, f"Expected 8 low, got {low_count}"
+        assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
+        assert high_count == 7, f"Expected 7 high, got {high_count}"
+
+    def test_go_segments_in_range(self):
+        from random import Random
+
+        rng = Random(42)
+        trials = generate_trials(
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
+            rng=rng,
+        )
+
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                assert 3 <= trial.num_go_segments <= 7, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 3-7 GO segments, "
+                    f"got {trial.num_go_segments}"
+                )
+
+    def test_go_durations_in_range(self):
+        from random import Random
+
+        rng = Random(42)
+        trials = generate_trials(
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
+            rng=rng,
+        )
+
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                for seg_idx, dur in enumerate(trial.go_segment_durations):
+                    assert 3.0 <= dur <= 7.0, (
+                        f"Block {block_idx} Trial {trial_idx} Segment {seg_idx}: "
+                        f"expected 3-7s, got {dur}"
+                    )
+                total_go = sum(trial.go_segment_durations)
+                assert total_go < 60.0, (
+                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 60s"
+                )
 
     def test_reproducibility_with_seed(self):
         from random import Random
 
         rng1 = Random(42)
         trials1 = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng1,
         )
 
         rng2 = Random(42)
         trials2 = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng2,
         )
 
-        for set_idx in range(len(trials1)):
-            for trial_idx in range(len(trials1[set_idx])):
-                t1 = trials1[set_idx][trial_idx]
-                t2 = trials2[set_idx][trial_idx]
+        for block_idx in range(len(trials1)):
+            for trial_idx in range(len(trials1[block_idx])):
+                t1 = trials1[block_idx][trial_idx]
+                t2 = trials2[block_idx][trial_idx]
                 assert t1.task_type == t2.task_type
                 assert t1.pain_condition == t2.pain_condition
-                assert t1.is_stop_trial == t2.is_stop_trial
+                assert t1.num_go_segments == t2.num_go_segments
+                assert t1.go_segment_durations == t2.go_segment_durations
 
 
 class TestMedocTrialRecord:
@@ -559,38 +599,39 @@ class TestContextManager:
             assert client.state == ConnectionState.DISCONNECTED
 
 
-class TestEightSetRun:
-    """Tests for full 8-set run with mock server."""
+class TestFiveBlockRun:
+    """Tests for full 5-block run."""
 
-    def test_full_96_trials_simulation(self, tmp_path):
-        """Simulate full 8-set run without real PsychoPy (96 trial records created)."""
+    def test_full_30_trials_simulation(self, tmp_path):
+        """Simulate full 5-block run (30 trial records created)."""
         from random import Random
 
         rng = Random(42)
         all_trials = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
-        total_trials = sum(len(set_trials) for set_trials in all_trials)
-        assert total_trials == 96
-
-        stop_trials = sum(
-            sum(1 for t in set_trials if t.is_stop_trial) for set_trials in all_trials
-        )
-        assert stop_trials == 24
+        total_trials = sum(len(block_trials) for block_trials in all_trials)
+        assert total_trials == 30
 
         vowel_trials = sum(
-            sum(1 for t in set_trials if t.task_type == "vowel") for set_trials in all_trials
+            sum(1 for t in block_trials if t.task_type == "vowel") for block_trials in all_trials
         )
-        assert vowel_trials == 48
+        assert vowel_trials == 30
 
         sentence_trials = sum(
-            sum(1 for t in set_trials if t.task_type == "sentence") for set_trials in all_trials
+            sum(1 for t in block_trials if t.task_type == "sentence") for block_trials in all_trials
         )
-        assert sentence_trials == 48
+        assert sentence_trials == 0
+
+        all_pain = [t.pain_condition for block in all_trials for t in block]
+        assert all_pain.count("xlow") == 8
+        assert all_pain.count("low") == 8
+        assert all_pain.count("medium") == 7
+        assert all_pain.count("high") == 7
 
     def test_trial_iteration_order(self):
         """Verify trials are iterated in correct order."""
@@ -598,19 +639,19 @@ class TestEightSetRun:
 
         rng = Random(123)
         all_trials = generate_trials(
-            num_sets=8,
-            trials_per_set=12,
-            num_stop_trials_ratio=0.25,
+            num_sets=5,
+            trials_per_set=6,
+            num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
         trial_count = 0
-        for set_num, set_trials in enumerate(all_trials):
-            for trial_num, trial_config in enumerate(set_trials):
+        for block_num, block_trials in enumerate(all_trials):
+            for trial_num, trial_config in enumerate(block_trials):
                 assert isinstance(trial_config, TrialConfig)
                 trial_count += 1
 
-        assert trial_count == 96
+        assert trial_count == 30
 
 
 class TestMultipleCommandsInSequence:

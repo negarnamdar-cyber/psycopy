@@ -1,8 +1,28 @@
-"""Medoc experiment controller for thermal stimulation with speech production.
+"""Medoc experiment controller for thermal stimulation with vowel production.
 
-Integrates Medoc thermode device communication with the existing speech
+Integrates Medoc thermode device communication with vowel speech
 experiment infrastructure. Manages trial randomization, device communication,
 VAD coordination, and data logging.
+
+Two experiment modes are supported:
+
+1. Vowel mode (NORMAL / PRACTICE):
+   - 5 blocks of 6 trials each = 30 total trials
+   - Each trial: 60 seconds of alternating STOP/GO segments
+     - 3-7 GO segments per trial, each 3-7 seconds
+     - STOP segments are brief (~0.5s) between GOs
+     - Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
+   - 1-minute break between blocks
+   - Pain conditions: xlow (8), low (8), medium (7), high (7)
+   - Total experiment time: ~35 minutes (30 trials x 60s + 4 breaks x 60s)
+
+2. Speech mode (SPEECH):
+   - Free speech interview with thermal stimulation
+   - Researchers ask questions while the screen shows "SPEAK"
+   - Behind the scenes: randomized pain schedule with 6 minutes on,
+     1 minute off (repeating until researcher stops)
+   - Only graceful shutdown (Q + 12345) stops the experiment
+   - ESC is disabled — only coded shutdown works
 """
 
 from __future__ import annotations
@@ -28,19 +48,14 @@ from psycopy.session import (
     save_config_snapshot,
 )
 from psycopy.runtime import PsychoPyUI, UserAbort
-from psycopy.stimuli import get_stimuli_path, load_stimuli
 from psycopy.trial_generator import TrialConfig, generate_trials
 from psycopy.validation import validate_config
 
 # Trial timing constants
-TRIAL_DURATION_SEC = 30.0  # Total trial duration in seconds
-COOLDOWN_DURATION_SEC = 15.0  # Fixed cooldown duration at end of trial
-SPEAKING_DURATION_SEC = TRIAL_DURATION_SEC - COOLDOWN_DURATION_SEC  # Active GO/STOP window before cooldown
-STOP_CUE_MIN_SEC = 10.0  # Earliest STOP cue time from trial start
-STOP_CUE_MAX_SEC = 15.0  # Latest STOP cue time from trial start
-MIN_STOP_DISPLAY_SEC = 2.0  # Minimum time STOP cue must remain visible
-INITIAL_STOP_SEC = 2.0  # Initial STOP screen before GO onset
-VOWEL_TEXT = "Ahh"  # Text displayed for vowel trials
+TRIAL_DURATION_SEC = 60.0  # Total trial duration in seconds
+BLOCK_BREAK_SEC = 60.0  # Break duration between blocks in seconds
+STOP_TRANSITION_SEC = 0.5  # Brief STOP display between GO segments
+VOWEL_TEXT = "Ahh"  # Text displayed for all trials
 
 logger = logging.getLogger("psycopy.medoc_experiment")
 
@@ -64,15 +79,17 @@ class TrialState(Enum):
 
 
 class MedocExperiment:
-    """Experiment controller for Medoc thermal stimulation.
+    """Experiment controller for Medoc thermal stimulation with vowel production.
 
-    Orchestrates 8 sets of 8 trials each, with per-trial Medoc device
+    Orchestrates 5 blocks of 6 trials each, with per-trial Medoc device
     communication, VAD measurements, and data logging.
 
     Trial structure:
-    - 4 vowel + 4 sentence trials per set (one of each pain level per task)
-    - 1 xlow + 1 low + 1 medium + 1 high pain per task per set
-    - ~25% stop trials per set by default
+    - 30 total trials across 5 blocks
+    - Each trial: 60 seconds of alternating STOP/GO
+    - 3-7 GO segments per trial, each 3-7 seconds
+    - 1-minute break between blocks
+    - Pain conditions: xlow (8), low (8), medium (7), high (7)
 
     Example:
         >>> config = ExperimentConfig(
@@ -81,10 +98,10 @@ class MedocExperiment:
         ...     medoc_config=MedocConfig(medoc_ip="192.168.1.100"),
         ... )
         >>> experiment = MedocExperiment(config)
-        >>> len(experiment.trials)  # 8 sets
-        8
-        >>> len(experiment.trials[0])  # 8 trials per set
-        8
+        >>> len(experiment.trials)  # 5 blocks
+        5
+        >>> len(experiment.trials[0])  # 6 trials per block
+        6
     """
 
     def __init__(self, config: ExperimentConfig) -> None:
@@ -136,29 +153,39 @@ class MedocExperiment:
 
         self.ui = PsychoPyUI(fullscreen=config.fullscreen)
 
-        # Determine number of sets based on mode (practice = 1 set, normal = 8 sets)
-        num_sets = (
+        # Determine number of blocks based on mode (practice = 1 block, normal = 5 blocks)
+        num_blocks = (
             1
             if config.mode in (ExperimentMode.PRACTICE_NO_MEDOC, ExperimentMode.PRACTICE_WITH_MEDOC)
-            else 8
+            else 5
         )
-        self.trials = generate_trials(
-            num_sets=num_sets,
-            trials_per_set=8,
-            num_stop_trials_ratio=0.25,
-            rng=self.rng,
-        )
+
+        # Speech mode: no structured trials; pain schedule generated later
+        if config.mode == ExperimentMode.SPEECH:
+            self.trials = []
+            self.speech_pain_schedule = self._generate_speech_pain_schedule()
+        else:
+            self.trials = generate_trials(
+                num_sets=num_blocks,
+                trials_per_set=6,
+                num_stop_trials_ratio=0.0,
+                rng=self.rng,
+            )
+            self.speech_pain_schedule = []
 
         self.currently_recording = False
         self._current_set = 0
         self._current_trial_in_set = 0
 
         self.event_logger.set_start_time()
-        self.logger.info(
-            "Generated %d sets with %d trials each",
-            len(self.trials),
-            len(self.trials[0]) if self.trials else 0,
-        )
+        if self.trials:
+            self.logger.info(
+                "Generated %d blocks with %d trials each",
+                len(self.trials),
+                len(self.trials[0]) if self.trials else 0,
+            )
+        else:
+            self.logger.info("Speech mode: no structured trials. Pain schedule ready.")
 
     def _setup_trial(self, trial_config: TrialConfig) -> None:
         """Prepare for trial execution.
@@ -168,17 +195,17 @@ class MedocExperiment:
 
         Args:
             trial_config: Configuration for this trial (task_type, pain_condition,
-                is_stop_trial).
+                num_go_segments, go_segment_durations).
 
         Note:
             This method prepares internal state only. The actual trial execution
             (connect, send command, disconnect) happens in run_trial.
         """
         logger.debug(
-            "Setting up trial: type=%s pain=%s stop=%s",
+            "Setting up trial: type=%s pain=%s segments=%d",
             trial_config.task_type,
             trial_config.pain_condition,
-            trial_config.is_stop_trial,
+            trial_config.num_go_segments,
         )
         if self.audio.vad_enabled:
             self.vad_logger.reset()
@@ -186,30 +213,35 @@ class MedocExperiment:
     def _load_stimulus_text(self, trial_config: TrialConfig, trial_idx: int) -> str:
         """Load stimulus text for a trial.
 
-        For vowel trials, returns 'Ahh'.
-        For sentence trials, loads text from stimuli.csv (cycling through available sentences).
+        All trials are vowel trials and display 'Ahh'.
 
         Args:
             trial_config: Trial configuration containing task_type.
-            trial_idx: Trial index for selecting sentence stimulus.
+            trial_idx: Trial index (unused, kept for API compatibility).
 
         Returns:
             Stimulus text string.
         """
-        if trial_config.task_type == "vowel":
-            return VOWEL_TEXT
+        return VOWEL_TEXT
 
-        stimuli_file = get_stimuli_path()
-        stimuli = load_stimuli(stimuli_file)
-        if not stimuli:
-            return "Sentence stimulus not available."
-        stimulus_idx = trial_idx % len(stimuli)
-        return stimuli[stimulus_idx].text
+    def _display_state(self, state: TaskState, stimulus_text: str) -> None:
+        """Display the current state (GO or STOP) with stimulus text.
+
+        Args:
+            state: TaskState.GO or TaskState.STOP
+            stimulus_text: Text to display (always "Ahh")
+        """
+        self.ui.apply_state(state)
+        self.ui.sentence_text.text = stimulus_text
+        self.ui.sentence_text.draw()
+        self.ui.state_background.draw()
+        self.ui.state_indicator.draw()
+        self.ui.win.flip()
 
     def run_trial(
         self, set_num: int, trial_num: int, trial_config: TrialConfig
     ) -> MedocTrialRecord:
-        """Execute a single trial with Medoc thermal stimulation.
+        """Execute a single 60-second trial with alternating STOP/GO segments.
 
         Trial timing sequence:
         1. Connect to Medoc (per-trial connection using context manager)
@@ -217,17 +249,20 @@ class MedocExperiment:
         3. Send the Medoc command mapped to this trial's pain condition
         4. Start audio recording via audio.start(audio_path)
         5. Start VAD monitoring via audio.start_vad_monitoring()
-        6. Show stimulus text (vowel="Ahh" or sentence from stimuli.csv)
-        7. For STOP trials (75%): show STOP cue via UI, VAD measures latency
-        8. Wait until 38s total elapsed from trigger_timestamp
-        9. Stop audio via audio.stop(), stop VAD via audio.stop_vad_monitoring()
-        10. Disconnect from Medoc (context manager handles this)
-        11. Return MedocTrialRecord with trigger fields populated
+        6. Display alternating STOP/GO segments:
+           - STOP -> GO (3-7s) -> STOP -> GO (3-7s) -> ... -> STOP
+           - 3-7 GO segments per trial
+           - Each GO segment: 3-7 seconds
+           - STOP between segments: ~0.5 seconds
+        7. Stop audio and VAD monitoring
+        8. Disconnect from Medoc (context manager handles this)
+        9. Return MedocTrialRecord with trigger fields populated
 
         Args:
-            set_num: Set number (0-indexed).
-            trial_num: Trial number within set (0-indexed).
-            trial_config: Trial configuration (task_type, pain_condition, is_stop_trial).
+            set_num: Block number (0-indexed).
+            trial_num: Trial number within block (0-indexed).
+            trial_config: Trial configuration (task_type, pain_condition,
+                num_go_segments, go_segment_durations).
 
         Returns:
             MedocTrialRecord with all trial data populated.
@@ -241,26 +276,24 @@ class MedocExperiment:
         trial_instance_id = generate_trial_instance_id(
             self.config.participant_id,
             self.config.session_id,
-            f"set{set_num}",
+            f"block{set_num}",
             trial_num,
         )
 
-        # Compute global trial index based on actual per-set length
-        per_set_len = len(self.trials[0]) if self.trials and len(self.trials[0]) > 0 else 1
-        global_trial_idx = set_num * per_set_len + trial_num
-        stimulus_text = self._load_stimulus_text(trial_config, global_trial_idx)
+        stimulus_text = self._load_stimulus_text(trial_config, trial_num)
 
-        audio_filename = f"sub-{self.config.participant_id}_set-{set_num}_trial-{trial_num:03d}.wav"
+        audio_filename = f"sub-{self.config.participant_id}_block-{set_num}_trial-{trial_num:03d}.wav"
         audio_path = self.session_paths.audio_dir / audio_filename
 
         self.event_logger.log(
             event_type="trial_start",
             trial_instance_id=trial_instance_id,
-            block=f"set{set_num}",
+            block=f"block{set_num}",
             event_data={
                 "task_type": trial_config.task_type,
                 "pain_condition": trial_config.pain_condition,
-                "is_stop_trial": trial_config.is_stop_trial,
+                "num_go_segments": trial_config.num_go_segments,
+                "go_durations": list(trial_config.go_segment_durations),
             },
         )
 
@@ -276,22 +309,7 @@ class MedocExperiment:
         audio_started = False
 
         try:
-            if trial_config.task_type == "vowel":
-                self.ui.apply_state(TaskState.STOP)
-                self.ui.sentence_text.text = stimulus_text
-                self.ui.sentence_text.draw()
-                self.ui.state_background.draw()
-                self.ui.state_indicator.draw()
-                self.ui.win.flip()
-                self.ui.wait(INITIAL_STOP_SEC)
-
-            self.ui.apply_state(TaskState.GO)
-            self.ui.sentence_text.text = stimulus_text
-            self.ui.sentence_text.draw()
-            self.ui.state_background.draw()
-            self.ui.state_indicator.draw()
-            self.ui.win.flip()
-
+            # Send Medoc command and start recording
             if self.medoc_client is not None:
                 with self.medoc_client as client:
                     trigger_timestamp = time.monotonic()
@@ -316,17 +334,14 @@ class MedocExperiment:
 
                     if self.config.vad_enabled:
                         self.audio.start_vad_monitoring()
-                        self.vad_logger.set_context(trial_instance_id, f"set{set_num}", set_num)
+                        self.vad_logger.set_context(trial_instance_id, f"block{set_num}", set_num)
                         vad_started = True
 
                     self.event_logger.log(
                         event_type="recording_start",
                         trial_instance_id=trial_instance_id,
-                        block=f"set{set_num}",
+                        block=f"block{set_num}",
                     )
-
-                    elapsed = time.monotonic() - trigger_timestamp
-                    remaining = TRIAL_DURATION_SEC - elapsed
             else:
                 trigger_timestamp = time.monotonic()
                 self.logger.warning(
@@ -341,58 +356,47 @@ class MedocExperiment:
 
                 if self.config.vad_enabled:
                     self.audio.start_vad_monitoring()
-                    self.vad_logger.set_context(trial_instance_id, f"set{set_num}", set_num)
+                    self.vad_logger.set_context(trial_instance_id, f"block{set_num}", set_num)
                     vad_started = True
 
                 self.event_logger.log(
                     event_type="recording_start",
                     trial_instance_id=trial_instance_id,
-                    block=f"set{set_num}",
+                    block=f"block{set_num}",
                 )
 
-                elapsed = time.monotonic() - trigger_timestamp
-                remaining = TRIAL_DURATION_SEC - elapsed
+            # Run the alternating STOP/GO segments
+            # Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
+            for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
+                # Brief STOP before GO (or between GOs)
+                self._display_state(TaskState.STOP, stimulus_text)
+                self.ui.wait(STOP_TRANSITION_SEC)
 
-            stop_cue_time: float | None = None
-            adjusted_speaking_duration = SPEAKING_DURATION_SEC
+                # GO segment - participant says "Ahh"
+                self._display_state(TaskState.GO, stimulus_text)
 
-            if trial_config.is_stop_trial:
-                stop_cue_elapsed = time.monotonic() - trigger_timestamp
-                stop_cue_delay = self.rng.uniform(STOP_CUE_MIN_SEC, STOP_CUE_MAX_SEC) - stop_cue_elapsed
-                if stop_cue_delay > 0:
-                    self.ui.wait(stop_cue_delay)
+                # Wait for the GO duration
+                self.ui.wait(go_duration)
 
-                    self.ui.apply_state(TaskState.STOP)
-                    self.ui.sentence_text.text = stimulus_text
-                    self.ui.sentence_text.draw()
-                    self.ui.state_background.draw()
-                    self.ui.state_indicator.draw()
-                    self.ui.win.flip()
-                    stop_cue_time = time.monotonic() - trigger_timestamp
-                    adjusted_speaking_duration = max(
-                        SPEAKING_DURATION_SEC,
-                        stop_cue_time + MIN_STOP_DISPLAY_SEC,
-                    )
+                # Log segment info
+                self.logger.debug(
+                    "Trial %d.%d segment %d: GO for %.2fs",
+                    set_num,
+                    trial_num,
+                    seg_idx,
+                    go_duration,
+                )
 
-                    if self.config.vad_enabled and self.audio.vad_enabled:
-                        relative_stop_cue_time = self.audio.set_stop_cue_time()
-                        if relative_stop_cue_time is not None:
-                            self.vad_logger.log_event(
-                                event_type="stop_cue",
-                                timestamp=relative_stop_cue_time,
-                            )
-                            self.logger.info(
-                                "STOP cue displayed at %.3f for trial %d.%d",
-                                relative_stop_cue_time,
-                                set_num,
-                                trial_num,
-                            )
+            # Final STOP after last GO segment
+            self._display_state(TaskState.STOP, stimulus_text)
 
-            speaking_elapsed = time.monotonic() - trigger_timestamp
-            speaking_remaining = adjusted_speaking_duration - speaking_elapsed
-            if speaking_remaining > 0:
-                self.ui.wait(speaking_remaining)
+            # Wait until full 60 seconds have elapsed
+            elapsed = time.monotonic() - trigger_timestamp
+            remaining = TRIAL_DURATION_SEC - elapsed
+            if remaining > 0:
+                self.ui.wait(remaining)
 
+            # Stop audio
             if audio_started or self.currently_recording:
                 try:
                     self.audio.stop()
@@ -401,11 +405,12 @@ class MedocExperiment:
                     self.event_logger.log(
                         event_type="recording_end",
                         trial_instance_id=trial_instance_id,
-                        block=f"set{set_num}",
+                        block=f"block{set_num}",
                     )
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
 
+            # Stop VAD and save events
             if vad_started and self.config.vad_enabled:
                 try:
                     vad_events = self.audio.stop_vad_monitoring()
@@ -416,27 +421,11 @@ class MedocExperiment:
                             is_speech=event.get("is_speech"),
                         )
 
-                    if trial_config.is_stop_trial:
-                        latency = self.audio.get_speech_cessation_latency()
-                        if latency is not None:
-                            latency_ms = latency * 1000.0
-                            self.logger.info(
-                                "VAD speech cessation latency: %.1f ms for trial %d.%d",
-                                latency_ms,
-                                set_num,
-                                trial_num,
-                            )
-
                     self.vad_logger.save()
                     self.vad_logger.reset()
                     vad_started = False
                 except Exception as exc:
                     self.logger.warning("Error stopping VAD: %s", exc)
-
-            cooldown_start = time.monotonic()
-            cooldown_duration = TRIAL_DURATION_SEC - (cooldown_start - trigger_timestamp)
-            if cooldown_duration > 0:
-                self._show_cooldown_screen(cooldown_duration)
 
         except Exception as exc:
             self.logger.exception("Error during trial %d.%d: %s", set_num, trial_num, exc)
@@ -450,7 +439,7 @@ class MedocExperiment:
                     self.event_logger.log(
                         event_type="recording_end",
                         trial_instance_id=trial_instance_id,
-                        block=f"set{set_num}",
+                        block=f"block{set_num}",
                     )
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
@@ -465,17 +454,6 @@ class MedocExperiment:
                             is_speech=event.get("is_speech"),
                         )
 
-                    if trial_config.is_stop_trial:
-                        latency = self.audio.get_speech_cessation_latency()
-                        if latency is not None:
-                            latency_ms = latency * 1000.0
-                            self.logger.info(
-                                "VAD speech cessation latency: %.1f ms for trial %d.%d",
-                                latency_ms,
-                                set_num,
-                                trial_num,
-                            )
-
                     self.vad_logger.save()
                     self.vad_logger.reset()
                 except Exception as exc:
@@ -487,20 +465,19 @@ class MedocExperiment:
         self.event_logger.log(
             event_type="trial_end",
             trial_instance_id=trial_instance_id,
-            block=f"set{set_num}",
+            block=f"block{set_num}",
             event_data={
                 "actual_duration_sec": round(actual_duration, 3),
-                "is_stop_trial": trial_config.is_stop_trial,
+                "num_go_segments": trial_config.num_go_segments,
             },
         )
 
         self.logger.info(
-            "Trial %d.%d complete: type=%s pain=%s stop=%s duration=%.3fs",
+            "Trial %d.%d complete: pain=%s segments=%d duration=%.3fs",
             set_num,
             trial_num,
-            trial_config.task_type,
             trial_config.pain_condition,
-            trial_config.is_stop_trial,
+            trial_config.num_go_segments,
             actual_duration,
         )
 
@@ -510,7 +487,7 @@ class MedocExperiment:
             trial_in_set=trial_num,
             task_type=trial_config.task_type,
             pain_condition=trial_config.pain_condition,
-            is_stop_trial=trial_config.is_stop_trial,
+            is_stop_trial=False,  # All trials have internal stop/go; this field retained for compat
             trigger_timestamp=trigger_timestamp,
             status_timestamp=status_timestamp,
             temperature_raw=temperature_raw,
@@ -521,27 +498,26 @@ class MedocExperiment:
         )
 
     def run_set(self, set_num: int, trials: list[TrialConfig]) -> None:
-        """Execute all trials in a set.
+        """Execute all trials in a block.
 
-        Iterates through trials in a set, calling `run_trial` for each.
+        Iterates through trials in a block, calling `run_trial` for each.
 
         Logs trial records to `MedocTrialLogger` and handles errors gracefully
-        (failed trials are logged and the set continues).
+        (failed trials are logged and the block continues).
 
         Args:
-            set_num: Set number (0-indexed).
-            trials: List of `TrialConfig` for this set (length depends on
-                experimental configuration; typically 8 or 12).
+            set_num: Block number (0-indexed).
+            trials: List of `TrialConfig` for this block (6 trials).
 
         Note:
-            Does NOT auto-advance to next set. Caller handles waiting screen.
+            Does NOT show break screen. Caller handles breaks between blocks.
         """
         self._current_set = set_num
         self.event_logger.log(
-            event_type="set_start",
+            event_type="block_start",
             trial_instance_id="",
-            block=f"set{set_num}",
-            event_data={"set_number": set_num, "num_trials": len(trials)},
+            block=f"block{set_num}",
+            event_data={"block_number": set_num, "num_trials": len(trials)},
         )
 
         for trial_num, trial_config in enumerate(trials):
@@ -550,11 +526,11 @@ class MedocExperiment:
                 record = self.run_trial(set_num, trial_num, trial_config)
                 self.trial_logger.log_trial(record)
                 self.logger.info(
-                    "Logged trial %d.%d: type=%s pain=%s",
+                    "Logged trial %d.%d: pain=%s segments=%d",
                     set_num,
                     trial_num,
-                    trial_config.task_type,
                     trial_config.pain_condition,
+                    trial_config.num_go_segments,
                 )
             except UserAbort:
                 raise
@@ -568,7 +544,7 @@ class MedocExperiment:
                 self.event_logger.log(
                     event_type="trial_error",
                     trial_instance_id="",
-                    block=f"set{set_num}",
+                    block=f"block{set_num}",
                     event_data={
                         "trial_num": trial_num,
                         "error": str(exc),
@@ -576,12 +552,141 @@ class MedocExperiment:
                 )
 
         self.event_logger.log(
-            event_type="set_end",
+            event_type="block_end",
             trial_instance_id="",
-            block=f"set{set_num}",
-            event_data={"set_number": set_num},
+            block=f"block{set_num}",
+            event_data={"block_number": set_num},
         )
-        self.logger.info("Set %d complete: %d trials executed", set_num, len(trials))
+        self.logger.info("Block %d complete: %d trials executed", set_num, len(trials))
+
+    def _show_break_screen(self, duration: float = BLOCK_BREAK_SEC) -> None:
+        """Show a break screen with countdown timer.
+
+        Displays: "BREAK - Rest your voice\n\nNext block in: {countdown}s"
+
+        Args:
+            duration: Break duration in seconds (default: 60).
+        """
+        start_time = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - start_time
+            remaining = duration - elapsed
+            if remaining <= 0:
+                break
+
+            message = (
+                "BREAK\n\nRest your voice.\n\n"
+                f"Next block in: {int(remaining)}s"
+            )
+            self.ui.instruction_text.text = message
+            self.ui.instruction_text.draw()
+            self.ui.help_text.draw()
+            self.ui.win.flip()
+            self.ui.wait(0.5)
+
+    def _generate_speech_pain_schedule(self) -> list[str]:
+        """Generate a randomized pain condition schedule for speech mode.
+
+        Creates a repeating pool of pain conditions: 8 xlow + 8 low + 7 medium + 7 high,
+        shuffles them, and returns as a flat list. The schedule loops as needed.
+
+        Returns:
+            List of pain condition strings in randomized order.
+        """
+        pain_pool = (
+            ["xlow"] * 8
+            + ["low"] * 8
+            + ["medium"] * 7
+            + ["high"] * 7
+        )
+        self.rng.shuffle(pain_pool)
+        self.logger.info("Speech mode: generated pain schedule with %d conditions", len(pain_pool))
+        return pain_pool
+
+    def _run_speech_pain_cycle(self, pain_condition: str, cycle_idx: int) -> None:
+        """Run one 6-minute pain + 1-minute pause cycle for speech mode.
+
+        Args:
+            pain_condition: Pain level to send to Medoc (xlow/low/medium/high).
+            cycle_idx: Zero-based cycle index for logging.
+        """
+        self.logger.info(
+            "Speech mode: starting pain cycle %d with condition %s",
+            cycle_idx,
+            pain_condition,
+        )
+        self.event_logger.log(
+            event_type="pain_cycle_start",
+            trial_instance_id="",
+            block="speech",
+            event_data={
+                "cycle_idx": cycle_idx,
+                "pain_condition": pain_condition,
+            },
+        )
+
+        trigger_timestamp = time.monotonic()
+
+        if self.medoc_client is not None:
+            with self.medoc_client as client:
+                client.send_program(pain_condition)
+                self.medoc_logger.log_trigger(
+                    trial_instance_id=f"speech_cycle_{cycle_idx:03d}",
+                    set_number=cycle_idx,
+                    trial_in_set=0,
+                    timestamp=trigger_timestamp,
+                )
+
+        # Pain on for 6 minutes (360 seconds)
+        self._show_speech_screen_with_timer(360.0, pain_condition, cycle_idx)
+
+        # 1-minute pause (break) between cycles
+        self.logger.info("Speech mode: 1-minute pause after cycle %d", cycle_idx)
+        self._show_break_screen(60.0)
+
+        self.event_logger.log(
+            event_type="pain_cycle_end",
+            trial_instance_id="",
+            block="speech",
+            event_data={"cycle_idx": cycle_idx},
+        )
+
+    def _show_speech_screen_with_timer(
+        self, duration: float, pain_condition: str, cycle_idx: int
+    ) -> None:
+        """Show the speech screen with a countdown timer.
+
+        Displays "SPEAK" and the remaining time. Only Q + shutdown code can exit.
+        Polls for the shutdown code every 0.1s without blocking the timer.
+
+        Args:
+            duration: Duration in seconds (6 minutes = 360).
+            pain_condition: Current pain condition being applied.
+            cycle_idx: Current cycle index.
+        """
+        start_time = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - start_time
+            remaining = duration - elapsed
+            if remaining <= 0:
+                break
+
+            # Show SPEAK screen with countdown
+            minutes = int(remaining) // 60
+            seconds = int(remaining) % 60
+            self.ui.sentence_text.text = (
+                f"SPEAK\n\n{minutes:01d}:{seconds:02d}\n\n{pain_condition.upper()}"
+            )
+            self.ui.sentence_text.pos = (0, 0.05)
+            self.ui.sentence_text.height = 0.08
+            self.ui.sentence_text.draw()
+            self.ui.help_text.text = "Press Q + 12345 to stop"
+            self.ui.help_text.draw()
+            self.ui.win.flip()
+
+            # Short wait; shutdown code check happens via _check_escape in UI's normal flow,
+            # but we bypass it here to avoid ESC handling. We just flip and wait.
+            self.ui.core.wait(0.1)
 
     def save_all_loggers(self) -> None:
         """Flush all loggers to disk.
@@ -599,51 +704,88 @@ class MedocExperiment:
         self.logger.info("All loggers saved to disk")
 
     def run(self) -> None:
-        """Run the complete 8-set experiment.
+        """Run the complete experiment.
 
-        Sequence:
-        1. Show instruction screen at start
-        2. Iterate through all 8 sets
-        3. Call run_set() for each set
-        4. After each set (except last), show waiting screen for manual advance
-        5. Handle UserAbort exception (ESC key) - save data and exit gracefully
-        6. Show completion screen at end
+        For NORMAL/PRACTICE modes: runs the 5-block vowel experiment.
+        For SPEECH mode: runs free speech interview with thermal stimulation
+            until researcher enters shutdown code (Q + 12345).
 
         Note:
-            Manual advance required between sets. Does NOT auto-advance.
+            ESC is disabled in speech mode. Only Q + 12345 stops gracefully.
         """
         try:
             self.event_logger.log(
                 event_type="experiment_start",
                 trial_instance_id="",
                 block="",
-                event_data={"participant_id": self.config.participant_id},
+                event_data={
+                    "participant_id": self.config.participant_id,
+                    "mode": self.config.mode.value,
+                },
             )
 
+            # ------------------------------------------------------------------
+            # SPEECH MODE
+            # ------------------------------------------------------------------
+            if self.config.mode == ExperimentMode.SPEECH:
+                self.logger.info("Running in SPEECH mode")
+                self.ui.show_instructions(
+                    go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
+                )
+
+                cycle_idx = 0
+                while True:
+                    pain = self.speech_pain_schedule[
+                        cycle_idx % len(self.speech_pain_schedule)
+                    ]
+                    try:
+                        self._run_speech_pain_cycle(pain, cycle_idx)
+                    except UserAbort:
+                        self.logger.info(
+                            "Speech mode: graceful shutdown requested after cycle %d", cycle_idx
+                        )
+                        break
+                    cycle_idx += 1
+
+                self.event_logger.log(
+                    event_type="experiment_complete",
+                    trial_instance_id="",
+                    block="",
+                    event_data={"total_cycles": cycle_idx + 1, "mode": "speech"},
+                )
+                self.ui.show_completion()
+                self.save_all_loggers()
+                return
+
+            # ------------------------------------------------------------------
+            # VOWEL MODE (NORMAL / PRACTICE)
+            # ------------------------------------------------------------------
             self.ui.show_instructions(
                 go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
             )
 
-            for set_num, set_trials in enumerate(self.trials):
-                self.logger.info("Starting set %d of %d", set_num + 1, len(self.trials))
-                self.run_set(set_num, set_trials)
+            for block_num, block_trials in enumerate(self.trials):
+                self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
+                self.run_set(block_num, block_trials)
 
-                if set_num < len(self.trials) - 1:
-                    self.ui.show_set_waiting_screen(set_num)
+                # Show 1-minute break between blocks (except after last block)
+                if block_num < len(self.trials) - 1:
+                    self.logger.info("Starting 1-minute break after block %d", block_num + 1)
+                    self._show_break_screen(BLOCK_BREAK_SEC)
 
-            total_per_set = len(self.trials[0]) if self.trials and len(self.trials[0]) > 0 else 0
+            total_trials = sum(len(block) for block in self.trials)
             self.event_logger.log(
                 event_type="experiment_complete",
                 trial_instance_id="",
                 block="",
-                event_data={"total_trials": len(self.trials) * total_per_set},
+                event_data={"total_trials": total_trials},
             )
 
             self.ui.show_completion()
             self.save_all_loggers()
 
         except UserAbort:
-            self.logger.warning("User aborted experiment with ESC key")
+            self.logger.warning("User requested graceful shutdown")
             self.event_logger.log(
                 event_type="experiment_abort",
                 trial_instance_id="",
@@ -668,12 +810,6 @@ class MedocExperiment:
 
         finally:
             self.ui.close()
-
-    def _show_cooldown_screen(self, duration: float) -> None:
-        self.ui.instruction_text.text = "Cooling down"
-        self.ui.instruction_text.draw()
-        self.ui.win.flip()
-        self.ui.wait(duration)
 
     def _show_set_waiting_screen(self, set_num: int) -> None:
         """Show waiting screen between sets for manual advance.

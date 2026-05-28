@@ -2,12 +2,9 @@
 
 Generates trial schedules with constrained randomization.
 
-Supported configurations:
-- 12-trial sets (legacy): 6 vowel + 6 sentence, 3 each of xlow/low/medium/high per set.
-- 8-trial sets: 4 vowel + 4 sentence (one vowel+one sentence per pain level).
-
-STOP/no-go allocation is handled per-configuration; for 8-trial sets we default
-to ~25% stop trials per set.
+Structure: 5 blocks of 6 trials = 30 total trials.
+Pain conditions: xlow (8), low (8), medium (7), high (7) across all blocks.
+Each trial is a 60-second vowel task with alternating STOP/GO segments.
 """
 
 from __future__ import annotations
@@ -21,16 +18,19 @@ class TrialConfig:
     """Configuration for a single trial.
 
     Attributes:
-        task_type: "vowel" or "sentence"
+        task_type: Always "vowel"
         pain_condition: "xlow", "low", "medium", or "high"
-        is_stop_trial: Whether this is a STOP trial
+        num_go_segments: Number of GO segments within the 60s trial (3-7)
+        go_segment_durations: Tuple of GO segment durations (seconds), each
+            between 3 and 7. Sum must be < 60 so STOP periods can fill the rest.
     """
 
     task_type: str
     pain_condition: str
-    is_stop_trial: bool
+    num_go_segments: int
+    go_segment_durations: tuple[float, ...]
 
-    def to_dict(self) -> dict[str, str | bool]:
+    def to_dict(self) -> dict[str, str | int | tuple[float, ...]]:
         return asdict(self)
 
     def __eq__(self, other: object) -> bool:
@@ -39,11 +39,41 @@ class TrialConfig:
         return (
             self.task_type == other.task_type
             and self.pain_condition == other.pain_condition
-            and self.is_stop_trial == other.is_stop_trial
+            and self.num_go_segments == other.num_go_segments
+            and self.go_segment_durations == other.go_segment_durations
         )
 
     def __hash__(self) -> int:
-        return hash((self.task_type, self.pain_condition, self.is_stop_trial))
+        return hash((self.task_type, self.pain_condition, self.num_go_segments, self.go_segment_durations))
+
+
+def _generate_go_durations(
+    num_segments: int,
+    min_seg_sec: float,
+    max_seg_sec: float,
+    total_max: float,
+    rng: random.Random,
+) -> tuple[float, ...]:
+    """Generate GO segment durations where each is in [min, max] and sum <= total_max.
+
+    With min=3, max=7 and total_max reserved from 60s, the max possible sum
+    (7 * 7 = 49) is always < total_max (52 for the worst case of 7 segments).
+    Therefore simple uniform random draws in [min, max] always satisfy the
+    constraints and no rescaling is needed.
+
+    Args:
+        num_segments: Number of GO segments.
+        min_seg_sec: Minimum duration per GO segment.
+        max_seg_sec: Maximum duration per GO segment.
+        total_max: Maximum total sum of all GO durations (unused, kept for API).
+        rng: Random instance.
+
+    Returns:
+        Tuple of GO segment durations.
+    """
+    # Simple uniform random draws - with the chosen parameters, the total
+    # will always be well under total_max, so no scaling is needed.
+    return tuple(round(rng.uniform(min_seg_sec, max_seg_sec), 2) for _ in range(num_segments))
 
 
 def generate_trials(
@@ -52,108 +82,72 @@ def generate_trials(
     num_stop_trials_ratio: float,
     rng: random.Random,
 ) -> list[list[TrialConfig]]:
-    """Generate randomized trial schedule with constraints.
+    """Generate randomized trial schedule.
 
-        Supported per-set layouts:
-        - 12-trial sets (legacy): 6 vowel + 6 sentence and 3 each of
-            xlow/low/medium/high pain conditions.
-        - 8-trial sets: 4 vowel + 4 sentence with one trial per pain level
-            for each task type.
+    Generates 5 blocks of 6 trials each (30 total). Pain conditions are:
+    - xlow: 8 trials
+    - low: 8 trials
+    - medium: 7 trials
+    - high: 7 trials
 
-        STOP/no-go allocation is handled per-configuration (see implementation).
+    Each trial has 3-7 GO segments (each 3-7 seconds) within a 60-second window.
+    `num_stop_trials_ratio` and the `num_sets` / `trials_per_set` arguments are
+    ignored (retained for API compatibility).
 
     Args:
-        num_sets: Number of trial sets (typically 8)
-        trials_per_set: Number of trials per set (supported: 8 or 12)
-        num_stop_trials_ratio: Retained for backward compatibility; ignored.
+        num_sets: Ignored (always 5 blocks).
+        trials_per_set: Ignored (always 6 trials per block).
+        num_stop_trials_ratio: Retained for API compatibility; ignored.
         rng: Seeded Random instance for reproducibility
 
     Returns:
-        List of sets, each set is a list of TrialConfig instances
-
-    Raises:
-        ValueError: If unsupported `trials_per_set` is provided
+        List of blocks, each block is a list of TrialConfig instances.
     """
-    all_sets: list[list[TrialConfig]] = []
+    num_blocks = 5
+    trials_per_block = 6
 
-    # Support two common configurations: 12-trial sets (legacy) and 8-trial sets
-    # (one vowel+one sentence per pain level). Other values are rejected.
-    if trials_per_set == 12:
-        sentence_stop_per_set = 3
-        vowel_trials_per_set = 6
-        total_vowel_trials = num_sets * vowel_trials_per_set
-        total_vowel_stop_trials = round(total_vowel_trials * 0.75)
-        vowel_stop_per_set = total_vowel_stop_trials // num_sets
-        vowel_stop_remainder = total_vowel_stop_trials % num_sets
-
-        for set_idx in range(num_sets):
-            # Build task list: exactly 6 vowel + 6 sentence
-            task_list = ["vowel"] * 6 + ["sentence"] * 6
-            rng.shuffle(task_list)
-
-            # Build pain list: exactly 3 each of xlow/low/medium/high
-            pain_list = ["xlow"] * 3 + ["low"] * 3 + ["medium"] * 3 + ["high"] * 3
-            rng.shuffle(pain_list)
-
-            set_trials = [
-                TrialConfig(
-                    task_type=task_list[i],
-                    pain_condition=pain_list[i],
-                    is_stop_trial=False,
-                )
-                for i in range(trials_per_set)
-            ]
-
-            sentence_indices = [idx for idx, trial in enumerate(set_trials) if trial.task_type == "sentence"]
-            vowel_indices = [idx for idx, trial in enumerate(set_trials) if trial.task_type == "vowel"]
-
-            rng.shuffle(sentence_indices)
-            rng.shuffle(vowel_indices)
-
-            vowel_stop_this_set = vowel_stop_per_set + (1 if set_idx < vowel_stop_remainder else 0)
-            stop_indices = set(sentence_indices[:sentence_stop_per_set] + vowel_indices[:vowel_stop_this_set])
-
-            set_trials = [
-                TrialConfig(
-                    task_type=trial.task_type,
-                    pain_condition=trial.pain_condition,
-                    is_stop_trial=(idx in stop_indices),
-                )
-                for idx, trial in enumerate(set_trials)
-            ]
-
-            all_sets.append(set_trials)
-
-        return all_sets
-
-    if trials_per_set == 8:
-        # Create a balanced set: for each pain level, include one vowel and one sentence trial
-        pain_levels = ["xlow", "low", "medium", "high"]
-        for _ in range(num_sets):
-            set_trials = [
-                TrialConfig(task_type=task, pain_condition=p, is_stop_trial=False)
-                for p in pain_levels
-                for task in ("vowel", "sentence")
-            ]
-            rng.shuffle(set_trials)
-
-            # Allocate stop trials: default to ~25% of trials per set (rounded)
-            num_stop = max(1, round(trials_per_set * 0.25))
-            stop_indices = set(rng.sample(range(trials_per_set), num_stop))
-
-            set_trials = [
-                TrialConfig(
-                    task_type=trial.task_type,
-                    pain_condition=trial.pain_condition,
-                    is_stop_trial=(idx in stop_indices),
-                )
-                for idx, trial in enumerate(set_trials)
-            ]
-
-            all_sets.append(set_trials)
-
-        return all_sets
-
-    raise ValueError(
-        f"Unsupported trials_per_set {trials_per_set}. Supported values: 8 or 12."
+    # Pain pool: 8 xlow + 8 low + 7 medium + 7 high = 30
+    pain_pool = (
+        ["xlow"] * 8
+        + ["low"] * 8
+        + ["medium"] * 7
+        + ["high"] * 7
     )
+    rng.shuffle(pain_pool)
+
+    all_blocks: list[list[TrialConfig]] = []
+    idx = 0
+
+    for _ in range(num_blocks):
+        block: list[TrialConfig] = []
+        for _ in range(trials_per_block):
+            pain = pain_pool[idx]
+            idx += 1
+
+            num_go = rng.randint(3, 7)
+            # Reserve ~1 s per STOP period so there is always some STOP time.
+            # With (num_go + 1) STOP periods, reserve that many seconds.
+            reserved_for_stop = float(num_go + 1)
+            max_go_total = 60.0 - reserved_for_stop
+
+            go_durs = _generate_go_durations(
+                num_segments=num_go,
+                min_seg_sec=3.0,
+                max_seg_sec=7.0,
+                total_max=max_go_total,
+                rng=rng,
+            )
+
+            block.append(
+                TrialConfig(
+                    task_type="vowel",
+                    pain_condition=pain,
+                    num_go_segments=num_go,
+                    go_segment_durations=go_durs,
+                )
+            )
+
+        rng.shuffle(block)
+        all_blocks.append(block)
+
+    return all_blocks

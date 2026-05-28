@@ -1,10 +1,10 @@
 """End-to-end validation test for Medoc experiment flow.
 
 Tests verify:
-- 8 sets × 12 trials = 96 trials total
-- Each set has 6V + 6S (vowel + sentence)
-- Each set has 3B + 3L + 3M + 3H (pain conditions)
-- 25% stop trials (24 total)
+- 5 blocks x 6 trials = 30 trials total
+- All trials are vowel trials
+- Pain conditions: 8 xlow, 8 low, 7 medium, 7 high across all 30
+- Each trial has 3-7 GO segments, each 3-7 seconds
 - All CSV files created (trials.csv, medoc_events.csv, vad_events.csv, events.csv)
 - Config snapshot exists (config.json)
 
@@ -70,7 +70,10 @@ class MockAudioService:
         self._recording = False
         self._recording_path = None
         self.vad_enabled = True
-        self._vad_events: list[dict] = []
+        self._vad_events: list[dict] = [
+            {"type": "speech_start", "timestamp": 0.5, "is_speech": True},
+            {"type": "speech_end", "timestamp": 1.2, "is_speech": False},
+        ]
         self._stop_cue_time = None
 
     def preflight(self):
@@ -113,7 +116,10 @@ class MockUI:
     def __init__(self):
         self.exp_clock = MockPsychoPyClock()
         self.instruction_text = MagicMock()
+        self.sentence_text = MagicMock()
         self.help_text = MagicMock()
+        self.state_background = MagicMock()
+        self.state_indicator = MagicMock()
         self.win = MagicMock()
         self.win.flip = MagicMock()
         self._call_count = {"show_instructions": 0, "show_completion": 0, "wait_for_space": 0}
@@ -129,6 +135,14 @@ class MockUI:
 
     def show_set_waiting_screen(self, set_num):
         """Show waiting screen between sets."""
+        pass
+
+    def wait(self, duration):
+        """Mock wait - do nothing."""
+        pass
+
+    def apply_state(self, state):
+        """Mock apply_state - do nothing."""
         pass
 
     def close(self):
@@ -230,7 +244,7 @@ def experiment_config(medoc_config):
 class TestFullExperimentOutput:
     """E2E test: Run full experiment and validate all outputs."""
 
-    def test_e2e_full_experiment_ninety_six_trials(
+    def test_e2e_full_experiment_thirty_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -239,7 +253,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Run E2E test with all mocks, validate 96 trials."""
+        """QA Scenario: Run E2E test with all mocks, validate 30 trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -266,13 +280,15 @@ class TestFullExperimentOutput:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            # Mock break screen to avoid real-time waiting
+            exp._show_break_screen = MagicMock()
             exp.run()
 
-            # Validate: 8 sets × 12 trials = 96 trials total
+            # Validate: 5 blocks x 6 trials = 30 trials total
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 96, f"Expected 96 trials, got {total_trials}"
+            assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
 
-    def test_e2e_trial_distribution_six_vowel_six_sentence(
+    def test_e2e_trial_distribution_all_vowel(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -281,7 +297,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Validate each set has 6V + 6S."""
+        """QA Scenario: Validate all 30 trials are vowel trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -308,27 +324,22 @@ class TestFullExperimentOutput:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
 
-            # Validate: Each set has exactly 6 vowel + 6 sentence
             trials = exp.trial_logger.trials
-            num_sets = 8
-            trials_per_set = 12
+            total = len(trials)
+            vowel_count = sum(1 for t in trials if t.task_type == "vowel")
+            sentence_count = sum(1 for t in trials if t.task_type == "sentence")
 
-            for set_idx in range(num_sets):
-                set_start = set_idx * trials_per_set
-                set_trials = trials[set_start : set_start + trials_per_set]
-                task_types = [t.task_type for t in set_trials]
-                vowel_count = task_types.count("vowel")
-                sentence_count = task_types.count("sentence")
-                assert vowel_count == 6, (
-                    f"Set {set_idx}: Expected 6 vowel trials, got {vowel_count}"
-                )
-                assert sentence_count == 6, (
-                    f"Set {set_idx}: Expected 6 sentence trials, got {sentence_count}"
-                )
+            assert vowel_count == total, (
+                f"Expected {total} vowel trials, got {vowel_count}"
+            )
+            assert sentence_count == 0, (
+                f"Expected 0 sentence trials, got {sentence_count}"
+            )
 
-    def test_e2e_pain_condition_distribution(
+    def test_e2e_pain_condition_distribution_across_all(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -337,7 +348,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Validate each set has 3B + 3L + 3M + 3H."""
+        """QA Scenario: Validate 8 xlow + 8 low + 7 medium + 7 high across all 30."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -364,31 +375,22 @@ class TestFullExperimentOutput:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
 
-            # Validate: Each set has 3B + 3L + 3M + 3H
             trials = exp.trial_logger.trials
-            num_sets = 8
-            trials_per_set = 12
+            pain_conditions = [t.pain_condition for t in trials]
+            xlow_count = pain_conditions.count("xlow")
+            low_count = pain_conditions.count("low")
+            medium_count = pain_conditions.count("medium")
+            high_count = pain_conditions.count("high")
 
-            for set_idx in range(num_sets):
-                set_start = set_idx * trials_per_set
-                set_trials = trials[set_start : set_start + trials_per_set]
-                pain_conditions = [t.pain_condition for t in set_trials]
-                baseline_count = pain_conditions.count("baseline")
-                low_count = pain_conditions.count("low")
-                medium_count = pain_conditions.count("medium")
-                high_count = pain_conditions.count("high")
+            assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
+            assert low_count == 8, f"Expected 8 low, got {low_count}"
+            assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
+            assert high_count == 7, f"Expected 7 high, got {high_count}"
 
-                assert baseline_count == 3, (
-                    f"Set {set_idx}: Expected 3 baseline, got {baseline_count}"
-                )
-                assert low_count == 3, f"Set {set_idx}: Expected 3 low, got {low_count}"
-                assert medium_count == 3, f"Set {set_idx}: Expected 3 medium, got {medium_count}"
-                assert high_count == 3, f"Set {set_idx}: Expected 3 high, got {high_count}"
-
-    def test_e2e_stop_trial_count(
-        self,
+    def test_e2e_go_segments_per_trial(self,
         temp_output_dir,
         mock_session_paths,
         mock_medoc_client,
@@ -396,7 +398,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Validate 25% stop trials (24 total)."""
+        """QA Scenario: Each trial has 3-7 GO segments."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -422,17 +424,56 @@ class TestFullExperimentOutput:
             )
 
             exp = MedocExperiment(config)
-            exp.audio = mock_audio
-            exp.run()
+            for block in exp.trials:
+                for trial in block:
+                    assert 3 <= trial.num_go_segments <= 7, (
+                        f"Expected 3-7 GO segments, got {trial.num_go_segments}"
+                    )
 
-            # Validate: 25% stop trials (24 of 96)
-            trials = exp.trial_logger.trials
-            stop_count = sum(1 for t in trials if t.is_stop_trial)
-            expected_stop = 24
+    def test_e2e_go_segment_durations(self,
+        temp_output_dir,
+        mock_session_paths,
+        mock_medoc_client,
+        mock_audio,
+        mock_ui,
+        mock_logger,
+    ):
+        """QA Scenario: Each GO segment is 3-7 seconds and total GO < 60."""
+        from psycopy.medoc_experiment import MedocExperiment
 
-            assert stop_count == expected_stop, (
-                f"Expected {expected_stop} stop trials (25%), got {stop_count}"
+        with (
+            patch("psycopy.medoc_experiment.MedocClient", return_value=mock_medoc_client),
+            patch("psycopy.medoc_experiment.PsychoPyUI", return_value=mock_ui),
+            patch("psycopy.medoc_experiment.AudioService", return_value=mock_audio),
+            patch("psycopy.medoc_experiment.validate_config"),
+            patch("psycopy.medoc_experiment.get_run_metadata", return_value={"version": "0.3.0"}),
+            patch("psycopy.medoc_experiment.configure_logging", return_value=mock_logger),
+            patch("psycopy.medoc_experiment.save_config_snapshot"),
+            patch(
+                "psycopy.medoc_experiment.create_output_directory",
+                return_value=mock_session_paths,
+            ),
+            patch("time.sleep"),
+        ):
+            config = ExperimentConfig(
+                participant_id="TEST001",
+                session_id="01",
+                random_seed="42",
+                medoc_config=MedocConfig(medoc_ip="192.168.1.100", medoc_port=5000),
+                vad_enabled=True,
             )
+
+            exp = MedocExperiment(config)
+            for block in exp.trials:
+                for trial in block:
+                    for dur in trial.go_segment_durations:
+                        assert 3.0 <= dur <= 7.0, (
+                            f"GO segment duration {dur} outside [3, 7]"
+                        )
+                    total_go = sum(trial.go_segment_durations)
+                    assert total_go < 60.0, (
+                        f"Total GO time {total_go} exceeds 60s"
+                    )
 
 
 # ==============================================================================
@@ -452,7 +493,7 @@ class TestCSVOutputValidation:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: trials.csv has 96 rows with required fields."""
+        """QA Scenario: trials.csv has 30 rows with required fields."""
         import pandas as pd
         from psycopy.medoc_experiment import MedocExperiment
 
@@ -480,6 +521,7 @@ class TestCSVOutputValidation:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
             exp.save_all_loggers()
 
@@ -488,7 +530,7 @@ class TestCSVOutputValidation:
             assert trials_path.exists(), "trials.csv not created"
 
             df = pd.read_csv(trials_path)
-            assert len(df) == 96, f"Expected 96 rows in trials.csv, got {len(df)}"
+            assert len(df) == 30, f"Expected 30 rows in trials.csv, got {len(df)}"
 
             # Verify required columns
             required_columns = [
@@ -539,6 +581,7 @@ class TestCSVOutputValidation:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
             exp.save_all_loggers()
 
@@ -549,12 +592,10 @@ class TestCSVOutputValidation:
             content = medoc_path.read_text()
             lines = content.strip().split("\n")
 
-            # Validate: 96 trigger + 96 status = 192 total (or merged events)
-            # The logger updates trigger events with status info
-            # Each trial has one row with both trigger and status info
+            # Validate: 30 trigger + 30 status = 60 total (or merged events)
             data_lines = [l for l in lines[1:] if l.strip()]  # Skip header
-            assert len(data_lines) >= 96, (
-                f"Expected at least 96 medoc event rows, got {len(data_lines)}"
+            assert len(data_lines) >= 30, (
+                f"Expected at least 30 medoc event rows, got {len(data_lines)}"
             )
 
             # Verify required columns
@@ -605,6 +646,7 @@ class TestCSVOutputValidation:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
             exp.save_all_loggers()
 
@@ -657,6 +699,7 @@ class TestCSVOutputValidation:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
             exp.save_all_loggers()
 
@@ -687,10 +730,10 @@ class TestCSVOutputValidation:
                 elif "trial_end" in event_type.lower():
                     trial_ends += 1
 
-            assert trial_starts >= 96, (
-                f"Expected at least 96 trial_start events, got {trial_starts}"
+            assert trial_starts >= 30, (
+                f"Expected at least 30 trial_start events, got {trial_starts}"
             )
-            assert trial_ends >= 96, f"Expected at least 96 trial_end events, got {trial_ends}"
+            assert trial_ends >= 30, f"Expected at least 30 trial_end events, got {trial_ends}"
 
     def test_e2e_config_json_snapshot(
         self,
@@ -728,6 +771,7 @@ class TestCSVOutputValidation:
 
             exp = MedocExperiment(config)
             exp.audio = mock_audio
+            exp._show_break_screen = MagicMock()
             exp.run()
             exp.save_all_loggers()
 
@@ -749,84 +793,97 @@ class TestCSVOutputValidation:
 class TestTrialGeneratorValidation:
     """Unit tests for trial generator constraints."""
 
-    def test_ninety_six_trials_total(self):
-        """Validate: 8 sets × 12 trials = 96 trials total."""
+    def test_thirty_trials_total(self):
+        """Validate: 5 blocks x 6 trials = 30 trials total."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
 
         total_trials = sum(len(t) for t in trials)
-        assert total_trials == 96, f"Expected 96 trials, got {total_trials}"
-        assert len(trials) == 8, f"Expected 8 sets, got {len(trials)}"
+        assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
+        assert len(trials) == 5, f"Expected 5 blocks, got {len(trials)}"
 
-    def test_six_vowel_six_sentence_per_set(self):
-        """Validate: Each set has 6V + 6S."""
+    def test_all_vowel_trials(self):
+        """Validate: All 30 trials are vowel."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
 
-        for set_idx, set_trials in enumerate(trials):
-            task_types = [t.task_type for t in set_trials]
-            vowel_count = task_types.count("vowel")
-            sentence_count = task_types.count("sentence")
-
-            assert vowel_count == 6, f"Set {set_idx}: Expected 6 vowel trials, got {vowel_count}"
-            assert sentence_count == 6, (
-                f"Set {set_idx}: Expected 6 sentence trials, got {sentence_count}"
-            )
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                assert trial.task_type == "vowel", (
+                    f"Block {block_idx} Trial {trial_idx}: expected vowel, got {trial.task_type}"
+                )
 
     def test_pain_condition_distribution(self):
-        """Validate: Each set has 3B + 3L + 3M + 3H."""
+        """Validate: 8 xlow + 8 low + 7 medium + 7 high across all 30."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
 
-        for set_idx, set_trials in enumerate(trials):
-            pain_conditions = [t.pain_condition for t in set_trials]
-            baseline_count = pain_conditions.count("baseline")
-            low_count = pain_conditions.count("low")
-            medium_count = pain_conditions.count("medium")
-            high_count = pain_conditions.count("high")
+        all_pain = [t.pain_condition for block in trials for t in block]
+        xlow_count = all_pain.count("xlow")
+        low_count = all_pain.count("low")
+        medium_count = all_pain.count("medium")
+        high_count = all_pain.count("high")
 
-            assert baseline_count == 3, f"Set {set_idx}: Expected 3 baseline, got {baseline_count}"
-            assert low_count == 3, f"Set {set_idx}: Expected 3 low, got {low_count}"
-            assert medium_count == 3, f"Set {set_idx}: Expected 3 medium, got {medium_count}"
-            assert high_count == 3, f"Set {set_idx}: Expected 3 high, got {high_count}"
+        assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
+        assert low_count == 8, f"Expected 8 low, got {low_count}"
+        assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
+        assert high_count == 7, f"Expected 7 high, got {high_count}"
 
-    def test_twenty_five_percent_stop_trials(self):
-        """Validate: 25% stop trials (24 of 96)."""
+    def test_go_segments_in_range(self):
+        """Validate: Each trial has 3-7 GO segments."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
 
-        total_stop = 0
-        for set_trials in trials:
-            total_stop += sum(1 for t in set_trials if t.is_stop_trial)
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                assert 3 <= trial.num_go_segments <= 7, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 3-7 GO segments, "
+                    f"got {trial.num_go_segments}"
+                )
 
-        expected_stop = 24  # 25% of 96
-        assert total_stop == expected_stop, (
-            f"Expected {expected_stop} stop trials (25%), got {total_stop}"
-        )
+    def test_go_durations_in_range(self):
+        """Validate: Each GO segment is 3-7 seconds and total GO < 60."""
+        rng = get_rng(ExperimentConfig(random_seed="42"))
+        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
+
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                for seg_idx, dur in enumerate(trial.go_segment_durations):
+                    assert 3.0 <= dur <= 7.0, (
+                        f"Block {block_idx} Trial {trial_idx} Segment {seg_idx}: "
+                        f"expected 3-7s, got {dur}"
+                    )
+                total_go = sum(trial.go_segment_durations)
+                assert total_go < 60.0, (
+                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 60s"
+                )
 
     def test_reproducibility_with_seed(self):
         """Validate: Same seed produces same sequence."""
         rng1 = get_rng(ExperimentConfig(random_seed="12345"))
         trials1 = generate_trials(
-            num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng1
+            num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng1
         )
 
         rng2 = get_rng(ExperimentConfig(random_seed="12345"))
         trials2 = generate_trials(
-            num_sets=8, trials_per_set=12, num_stop_trials_ratio=0.25, rng=rng2
+            num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng2
         )
 
         # Compare all trial configs
-        for set_idx in range(len(trials1)):
-            for trial_idx in range(len(trials1[set_idx])):
-                t1 = trials1[set_idx][trial_idx]
-                t2 = trials2[set_idx][trial_idx]
+        for block_idx in range(len(trials1)):
+            for trial_idx in range(len(trials1[block_idx])):
+                t1 = trials1[block_idx][trial_idx]
+                t2 = trials2[block_idx][trial_idx]
                 assert t1.task_type == t2.task_type, (
-                    f"Set {set_idx} Trial {trial_idx}: task_type mismatch"
+                    f"Block {block_idx} Trial {trial_idx}: task_type mismatch"
                 )
                 assert t1.pain_condition == t2.pain_condition, (
-                    f"Set {set_idx} Trial {trial_idx}: pain_condition mismatch"
+                    f"Block {block_idx} Trial {trial_idx}: pain_condition mismatch"
                 )
-                assert t1.is_stop_trial == t2.is_stop_trial, (
-                    f"Set {set_idx} Trial {trial_idx}: is_stop_trial mismatch"
+                assert t1.num_go_segments == t2.num_go_segments, (
+                    f"Block {block_idx} Trial {trial_idx}: num_go_segments mismatch"
+                )
+                assert t1.go_segment_durations == t2.go_segment_durations, (
+                    f"Block {block_idx} Trial {trial_idx}: go_segment_durations mismatch"
                 )

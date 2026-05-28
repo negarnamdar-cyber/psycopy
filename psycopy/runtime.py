@@ -160,7 +160,7 @@ class PsychoPyUI:
         # Help text for footer
         self.help_text = self.visual.TextStim(
             win=self.win,
-            text="Press ESC to abort or Q for coded shutdown",
+            text="Press Q for coded shutdown",
             font="Arial",
             pos=(0, -0.48),
             height=0.025,
@@ -170,21 +170,21 @@ class PsychoPyUI:
         )
 
     def _check_escape(self) -> None:
-        keys = self.event.getKeys(keyList=["escape", "q"])
-        if "escape" in keys:
-            raise UserAbort()
+        """Check for shutdown code (Q + 12345). ESC is ignored — use Q + 12345 for graceful stop."""
+        keys = self.event.getKeys(keyList=["q"])
         if "q" in keys and self._confirm_shutdown_code():
             raise UserAbort()
 
     def _confirm_shutdown_code(self) -> bool:
+        """Show shutdown code entry screen. Only Q + 12345 works — ESC does not cancel."""
         entered = ""
         self.event.clearEvents(eventType="keyboard")
         while True:
             self.instruction_text.text = (
                 "Shutdown requested\n\n"
                 f"Enter code: {entered}\n\n"
-                "Type 12345 to stop gracefully.\n"
-                "Press ESC to cancel."
+                f"Type {self.SHUTDOWN_CODE} to stop gracefully.\n"
+                "Press BACKSPACE to delete."
             )
             self.instruction_text.draw()
             self.help_text.draw()
@@ -192,9 +192,6 @@ class PsychoPyUI:
 
             keys = self.event.getKeys()
             for key in keys:
-                if key == "escape":
-                    self.event.clearEvents(eventType="keyboard")
-                    return False
                 if key in {"return", "num_enter", "enter"}:
                     if entered == self.SHUTDOWN_CODE:
                         self.event.clearEvents(eventType="keyboard")
@@ -247,46 +244,52 @@ class PsychoPyUI:
             if medoc_enabled:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Speech Experiment with Thermal Stimulation\n\n"
-                    "You will read sentences aloud.\n\n"
+                    "Vowel Experiment with Thermal Stimulation\n\n"
+                    "Each trial lasts 60 seconds.\n"
+                    "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
                     "IMPORTANT:\n"
-                    "  • Speak ONLY when the screen is GREEN (GO)\n"
+                    "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
                     "  • STOP immediately when the screen turns RED\n"
-                    "  • Stay silent during STOP periods\n\n"
+                    "  • Stay silent during STOP periods\n"
+                    "  • The screen will switch multiple times per trial\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
-                    "You may experience changes in pain/discomfort levels.\n"
-                    "Please rate your pain levels as instructed.\n\n"
+                    "You may experience changes in pain/discomfort levels.\n\n"
+                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "You will read sentences aloud.\n\n"
+                    "Each trial lasts 60 seconds.\n"
+                    "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
                     "IMPORTANT:\n"
-                    "  • Speak ONLY when the screen is GREEN (GO)\n"
+                    "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
                     "  • STOP immediately when the screen turns RED\n"
-                    "  • Stay silent during STOP periods\n\n"
+                    "  • Stay silent during STOP periods\n"
+                    "  • The screen will switch multiple times per trial\n\n"
+                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
                     "Press SPACE to begin."
                 )
         else:
             if medoc_enabled:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Speech Experiment with Thermal Stimulation\n\n"
-                    "You will read sentences aloud.\n\n"
-                    "The screen will stay GREEN throughout.\n"
-                    "Speak continuously until you finish.\n\n"
+                    "Vowel Experiment with Thermal Stimulation\n\n"
+                    "Each trial lasts 60 seconds.\n"
+                    "The screen will stay GREEN throughout each trial.\n"
+                    "Speak 'Ahh' continuously.\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
-                    "You may experience changes in pain/discomfort levels.\n"
-                    "Please rate your pain levels as instructed.\n\n"
+                    "You may experience changes in pain/discomfort levels.\n\n"
+                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "You will read sentences aloud.\n\n"
-                    "The screen will stay GREEN throughout.\n"
-                    "Speak continuously until you finish.\n\n"
+                    "Each trial lasts 60 seconds.\n"
+                    "The screen will stay GREEN throughout each trial.\n"
+                    "Speak 'Ahh' continuously.\n\n"
+                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
                     "Press SPACE to begin."
                 )
         self.instruction_text.text = instructions
@@ -375,6 +378,35 @@ class PsychoPyUI:
         self.help_text.draw()
         self.win.flip()
         self.wait_for_space()
+
+    def show_speech_screen(self) -> None:
+        """Show the speech interview screen. Displays 'SPEAK' continuously.
+
+        Researchers ask questions while this screen is shown.
+        Only Q + shutdown code (12345) can exit.
+        """
+        self.sentence_text.text = "SPEAK"
+        self.sentence_text.pos = (0, 0)
+        self.sentence_text.height = 0.12
+        self.sentence_text.draw()
+        self.help_text.text = "Press Q + 12345 to stop"
+        self.help_text.draw()
+        self.win.flip()
+
+    def run_speech_loop(self) -> None:
+        """Run the free speech interview screen until researcher enters shutdown code.
+
+        Polls continuously for the shutdown code (Q + 12345).
+        ESC does not stop the experiment — only the coded shutdown works.
+        """
+        self.event.clearEvents(eventType="keyboard")
+        while True:
+            self.show_speech_screen()
+            # Check for Q to start shutdown code entry
+            keys = self.event.getKeys(keyList=["q"])
+            if keys and self._confirm_shutdown_code():
+                break
+            self.core.wait(0.1)
 
     def show_rt_instructions(self) -> None:
         """Show reaction time task instructions with improved formatting."""

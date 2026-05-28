@@ -1,15 +1,20 @@
-# Speech Gating Experiment with Medoc Thermal Stimulation
+# Vowel Speech Gating Experiment with Medoc Thermal Stimulation
 
-PsychoPy experiment for speech production under thermal stimulation with Medoc thermode device. The experiment runs 8 sets of 12 trials with varying pain conditions and voice activity detection.
+PsychoPy experiment for vowel production under thermal stimulation with Medoc thermode device. The experiment runs 5 blocks of 6 trials (30 total) with varying pain conditions, alternating GO/STOP segments, and voice activity detection.
 
 ## Experiment Structure
 
-- **8 sets** × **12 trials per set** = **96 total trials**
-- Each set contains:
-  - 6 vowel trials + 6 sentence trials
-  - 3 baseline + 3 low + 3 medium + 3 high pain conditions
-- **25% stop trials** globally (24 of 96 total)
-- **38-second trial duration** with Medoc thermal stimulation
+- **5 blocks** x **6 trials per block** = **30 total trials**
+- Each trial: **60 seconds** of alternating STOP/GO segments
+  - 3-7 GO segments per trial, each 3-7 seconds
+  - Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
+- **1-minute break** between blocks
+- Pain conditions distributed across 30 trials:
+  - xlow: 8 trials
+  - low: 8 trials
+  - medium: 7 trials
+  - high: 7 trials
+- Total experiment time: ~35 minutes (30 trials x 60s + 4 breaks x 60s)
 
 ## Architecture
 
@@ -18,7 +23,7 @@ Core modules under `psycopy/*`:
 - `psycopy/config.py`: Experiment configuration + startup dialog
 - `psycopy/medoc_experiment.py`: Main experiment orchestration
 - `psycopy/medoc.py`: Medoc thermode device TCP client
-- `psycopy/trial_generator.py`: Trial randomization (8 sets × 12 trials)
+- `psycopy/trial_generator.py`: Trial randomization (5 blocks x 6 trials)
 - `psycopy/runtime.py`: PsychoPy UI primitives
 - `psycopy/session.py`: Output paths + data loggers
 - `psycopy/audio.py`: Audio recording service
@@ -54,15 +59,15 @@ The startup dialog will prompt for:
 
 - **Participant ID**: Subject identifier (e.g., "001")
 - **Session ID**: Session number (e.g., "01")
-- **Medoc Device IP**: IP address of the thermode (default: 192.168.1.100)
-- **Medoc Device Port**: TCP port (default: 5000)
-- **Skip Medoc Connection**: Enable testing mode without hardware
+- **Experiment Mode**: Normal, Practice (no Medoc), or Practice (with Medoc)
+- **Medoc Device IP**: IP address of the thermode (default: 10.196.94.38)
+- **Medoc Device Port**: TCP port (default: 20121)
 
 ## Testing Mode
 
 To run without a physical Medoc device (useful for development/testing):
 
-1. Check "Skip Medoc Connection (testing mode)" in the startup dialog
+1. Select "Practice (no Medoc device)" mode in the startup dialog
 2. The experiment will run but temperature data will not be recorded
 3. All trial timing and VAD functionality works normally
 
@@ -88,11 +93,11 @@ Each session creates a directory: `data/YYYYMMDD_HHMMSS_sub-{participant}_sessio
 | Column | Description |
 |--------|-------------|
 | `trial_instance_id` | Unique trial identifier |
-| `set_number` | Set index (0-7) |
-| `trial_in_set` | Trial index within set (0-11) |
-| `task_type` | "vowel" or "sentence" |
-| `pain_condition` | "baseline", "low", "medium", "high" |
-| `is_stop_trial` | True if stop trial |
+| `set_number` | Block index (0-4) |
+| `trial_in_set` | Trial index within block (0-5) |
+| `task_type` | Always "vowel" |
+| `pain_condition` | "xlow", "low", "medium", "high" |
+| `is_stop_trial` | Always False (stop/go is internal) |
 | `trigger_timestamp` | Medoc trigger time |
 | `status_timestamp` | Medoc status response time |
 | `temperature_celsius` | Recorded temperature |
@@ -103,7 +108,7 @@ Each session creates a directory: `data/YYYYMMDD_HHMMSS_sub-{participant}_sessio
 VAD is enabled by default and measures:
 - Speech onset latency
 - Speech cessation latency (time from STOP cue to speech end)
-- Stop cue index for each trial
+- GO/STOP segment timing for each trial
 
 ## Testing
 
@@ -132,8 +137,8 @@ python -m pytest tests/test_medoc_optional.py -v
 If you see "Failed to connect to Medoc device":
 1. Check the device IP address matches your network
 2. Verify the device is powered on and connected
-3. Check firewall settings on port 5000
-4. Enable "Skip Medoc Connection" for testing
+3. Check firewall settings on port 20121
+4. Enable "Practice (no Medoc)" mode for testing
 
 ### Audio Recording Issues
 
