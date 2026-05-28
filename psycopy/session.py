@@ -356,6 +356,41 @@ class MedocLogger:
                 trigger_event["response_code"] = state_dict["response_code"]
         self._dirty = True
 
+    def log_poll(
+        self,
+        trial_instance_id: str,
+        set_number: int,
+        trial_in_set: int,
+        timestamp: float,
+        raw_bytes: bytes | None,
+        state_dict: dict | None,
+    ) -> None:
+        """Log a temperature poll event (standalone, not linked to a trigger).
+
+        Args:
+            trial_instance_id: Unique identifier for the cycle/trial.
+            set_number: Block / cycle number.
+            trial_in_set: Trial index within block.
+            timestamp: Poll timestamp (monotonic time).
+            raw_bytes: Raw response bytes from Medoc.
+            state_dict: Parsed status dict from poll_status().
+        """
+        temp_raw = raw_bytes.hex() if raw_bytes else ""
+        event = {
+            "trial_instance_id": trial_instance_id,
+            "set_number": set_number,
+            "trial_in_set": trial_in_set,
+            "trigger_timestamp": "",
+            "status_timestamp": str(timestamp),
+            "temperature_raw": temp_raw,
+            "temperature_celsius": state_dict.get("temperature_celsius") if state_dict else "",
+            "device_state": state_dict.get("device_state") if state_dict else "",
+            "test_state": state_dict.get("test_state") if state_dict else "",
+            "response_code": state_dict.get("response_code") if state_dict else "",
+        }
+        self.events.append(event)
+        self._dirty = True
+
     def save(self, force: bool = False) -> None:
         """Write events to CSV file. Use force=True for explicit flush."""
         if not force and not self._dirty:

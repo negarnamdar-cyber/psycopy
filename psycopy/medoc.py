@@ -1,11 +1,25 @@
-"""Medoc communication exceptions and client."""
+"""Medoc communication exceptions and client.
+
+Uses the MMS framed protocol:
+  Frame = [4-byte big-endian length] + [body]
+  Body  = [4-byte timestamp BE] + [1-byte command_id] + [parameters / response data]
+
+Status response body layout (after timestamp + command_id):
+  bytes 5-6 : padding / reserved
+  bytes 7-8 : response code (big-endian)
+  bytes 9-12: temperature as little-endian IEEE-754 float
+  byte  13  : device_state
+  byte  14  : test_state
+"""
 
 from __future__ import annotations
 
 import logging
 import socket
+import struct
 import time
 from enum import IntEnum
+from typing import Any
 
 from psycopy.config import MedocConfig
 from psycopy.models import MedocResponseCode
@@ -64,12 +78,14 @@ class MedocClient:
     """
 
     PROGRAM_CODES: dict[str, int] = {
-        "xlow": 121,  # 01111001
-        "low": 83,  # 01010011
-        "medium": 82,  # 01010010
-        "high": 87,  # 01010111
+        "unified": 11000000,
+        "xlow": 121,
+        "low": 83,
+        "medium": 82,
+        "high": 87,
     }
     GET_STATUS = 0
+    POLL_STATUS = 192  # 0xC0 – poll temperature / device state
     SELECT_TP = 1
     START = 2
     INTER_CMD_DELAY_SEC = 0.5
@@ -329,3 +345,112 @@ class MedocClient:
                 )
                 return
             raise
+
+    def send_unified_program(self) -> None:
+        """Send the unified 11000000 program via SELECT_TP + START.
+
+        Keeps the socket open so the caller can continue polling status.
+        Must be called while the socket is already connected.
+
+        Raises:
+            MedocResponseError: If SELECT_TP or START fails.
+            RuntimeError: If socket is not connected.
+        """
+        program_code = self.PROGRAM_CODES["unified"]
+        try:
+            select_response = self._send_framed_command(
+                self.SELECT_TP,
+                param_bytes=self._u32be(socket.htonl(program_code)),
+                tag=f"SELECT_TP unified (A)",
+            )
+            select_rc = self._parse_response_code(select_response)
+            if select_rc != MedocResponseCode.OK:
+                time.sleep(self.INTER_CMD_DELAY_SEC)
+                select_response = self._send_framed_command(
+                    self.SELECT_TP,
+                    param_bytes=self._u32be(program_code),
+                    tag=f"SELECT_TP unified (B)",
+                )
+                select_rc = self._parse_response_code(select_response)
+            if select_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=select_rc,
+                    raw_bytes=select_response,
+                    message=f"SELECT_TP failed for unified with code {select_rc}",
+                )
+
+            time.sleep(self.INTER_CMD_DELAY_SEC)
+
+            start_response = self._send_framed_command(
+                self.START,
+                tag="START unified",
+            )
+            start_rc = self._parse_response_code(start_response)
+            if start_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=start_rc,
+                    raw_bytes=start_response,
+                    message=f"START failed for unified with code {start_rc}",
+                )
+        except socket.timeout:
+            raise MedocTimeoutError(
+                self._config.medoc_timeout,
+                "Timeout waiting for Medoc framed response during unified program start",
+            ) from None
+
+    def poll_status(self) -> dict[str, Any]:
+        """Poll Medoc device for current temperature and state.
+
+        Sends command 192 (0xC0) and parses the framed response.
+        Must be called while the socket is already connected.
+
+        Returns:
+            Dict with keys:
+                - response_code (int)
+                - temperature_celsius (float)
+                - device_state (int)
+                - test_state (int | None)
+                - raw_bytes (bytes)
+
+        Raises:
+            MedocResponseError: If the response is too short or indicates failure.
+            RuntimeError: If socket is not connected.
+        """
+        raw_response = self._send_framed_command(
+            self.POLL_STATUS,
+            tag="POLL_STATUS",
+        )
+        return self._parse_status(raw_response)
+
+    def _parse_status(self, raw_response: bytes) -> dict[str, Any]:
+        """Parse a status/poll response into a dictionary.
+
+        Expected body layout (after 4-byte length header):
+          bytes 0-3  : timestamp
+          byte  4    : command_id
+          bytes 5-6  : reserved / padding
+          bytes 7-8  : response code (big-endian)
+          bytes 9-12 : temperature as little-endian float
+          byte  13   : device_state
+          byte  14   : test_state
+        """
+        if len(raw_response) < 19:  # 4 header + 15 body minimum
+            raise MedocResponseError(
+                response_code=-1,
+                raw_bytes=raw_response,
+                message="Response too short to parse Medoc status",
+            )
+
+        body = raw_response[4:]
+        response_code = int.from_bytes(body[7:9], "big")
+        temperature = struct.unpack("<f", body[9:13])[0]
+        device_state = body[13]
+        test_state = body[14] if len(body) > 14 else None
+
+        return {
+            "response_code": response_code,
+            "temperature_celsius": temperature,
+            "device_state": device_state,
+            "test_state": test_state,
+            "raw_bytes": raw_response,
+        }
