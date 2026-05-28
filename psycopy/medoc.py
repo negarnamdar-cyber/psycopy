@@ -359,40 +359,72 @@ class MedocClient:
         """
         program_code = self.PROGRAM_CODES["unified"]
         try:
-            select_response = self._send_framed_command(
-                self.SELECT_TP,
-                param_bytes=self._u32be(socket.htonl(program_code)),
-                tag=f"SELECT_TP unified (A)",
-            )
-            select_rc = self._parse_response_code(select_response)
-            if select_rc != MedocResponseCode.OK:
-                time.sleep(self.INTER_CMD_DELAY_SEC)
+            try:
                 select_response = self._send_framed_command(
                     self.SELECT_TP,
-                    param_bytes=self._u32be(program_code),
-                    tag=f"SELECT_TP unified (B)",
+                    param_bytes=self._u32be(socket.htonl(program_code)),
+                    tag=f"SELECT_TP unified (A)",
                 )
                 select_rc = self._parse_response_code(select_response)
-            if select_rc != MedocResponseCode.OK:
-                raise MedocResponseError(
-                    response_code=select_rc,
-                    raw_bytes=select_response,
-                    message=f"SELECT_TP failed for unified with code {select_rc}",
-                )
+                if select_rc != MedocResponseCode.OK:
+                    time.sleep(self.INTER_CMD_DELAY_SEC)
+                    select_response = self._send_framed_command(
+                        self.SELECT_TP,
+                        param_bytes=self._u32be(program_code),
+                        tag=f"SELECT_TP unified (B)",
+                    )
+                    select_rc = self._parse_response_code(select_response)
+                if select_rc != MedocResponseCode.OK:
+                    raise MedocResponseError(
+                        response_code=select_rc,
+                        raw_bytes=select_response,
+                        message=f"SELECT_TP failed for unified with code {select_rc}",
+                    )
+            except MedocResponseError as exc:
+                if self._is_incomplete_response_error(exc):
+                    logger.warning(
+                        "Ignoring incomplete SELECT_TP response for unified and continuing: %s",
+                        exc,
+                    )
+                else:
+                    raise
 
             time.sleep(self.INTER_CMD_DELAY_SEC)
 
-            start_response = self._send_framed_command(
-                self.START,
-                tag="START unified",
-            )
-            start_rc = self._parse_response_code(start_response)
-            if start_rc != MedocResponseCode.OK:
-                raise MedocResponseError(
-                    response_code=start_rc,
-                    raw_bytes=start_response,
-                    message=f"START failed for unified with code {start_rc}",
+            try:
+                start_response = self._send_framed_command(
+                    self.START,
+                    tag="START unified",
                 )
+                start_rc = self._parse_response_code(start_response)
+                if start_rc != MedocResponseCode.OK:
+                    raise MedocResponseError(
+                        response_code=start_rc,
+                        raw_bytes=start_response,
+                        message=f"START failed for unified with code {start_rc}",
+                    )
+            except MedocResponseError as exc:
+                if self._is_incomplete_response_error(exc):
+                    logger.warning(
+                        "Ignoring incomplete START response for unified and continuing: %s",
+                        exc,
+                    )
+                else:
+                    raise
+
+            time.sleep(0.2)
+            try:
+                verify = self.poll_status()
+                if verify.get("test_state") == 1:
+                    logger.info("Unified program verified running (test_state=1)")
+                else:
+                    logger.warning(
+                        "Unified program test_state=%s after START",
+                        verify.get("test_state"),
+                    )
+            except Exception as exc:
+                logger.warning("Could not verify unified program status: %s", exc)
+
         except socket.timeout:
             raise MedocTimeoutError(
                 self._config.medoc_timeout,
