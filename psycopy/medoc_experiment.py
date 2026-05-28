@@ -746,8 +746,8 @@ class MedocExperiment:
             self.ui.help_text.draw()
             self.ui.win.flip()
 
-            # Short wait; shutdown code check happens via _check_escape in UI's normal flow,
-            # but we bypass it here to avoid ESC handling. We just flip and wait.
+            # Check for graceful shutdown (Q + 12345)
+            self.ui._check_escape()
             self.ui.core.wait(0.1)
 
     def save_all_loggers(self) -> None:
