@@ -196,8 +196,9 @@ class TestMedocOptionalMode:
 
                 trial_config = TrialConfig(
                     task_type="vowel",
-                    pain_condition="baseline",
-                    is_stop_trial=False,
+                    pain_condition="xlow",
+                    num_go_segments=1,
+                    go_segment_durations=(1.0,),
                 )
 
                 # Run trial - should not call medoc_client methods
@@ -207,7 +208,7 @@ class TestMedocOptionalMode:
                             record = experiment.run_trial(0, 0, trial_config)
 
                 # Verify no medoc client methods were called
-                mock_medoc_client.return_value.__enter__.return_value.send_program.assert_not_called()
+                mock_medoc_client.return_value.__enter__.return_value.send_unified_program.assert_not_called()
 
                 # Verify record was created with no temperature data
                 assert record.temperature_celsius is None
@@ -325,8 +326,9 @@ class TestMedocOptionalMode:
 
                 trial_config = TrialConfig(
                     task_type="vowel",
-                    pain_condition="baseline",
-                    is_stop_trial=False,
+                    pain_condition="xlow",
+                    num_go_segments=1,
+                    go_segment_durations=(1.0,),
                 )
 
                 with patch.object(experiment, "audio", mock_audio_instance):

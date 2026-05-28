@@ -75,17 +75,11 @@ class ConnectionState(IntEnum):
 class MedocClient:
     """TCP socket client for Medoc thermode device communication.
 
-    Manages per-trial connection lifecycle:
-    - Connect → TRIGGER → wait → GET_STATUS → disconnect
+    Manages the unified Medoc thermal program:
+    - Connect -> SELECT_TP unified -> START -> poll status -> disconnect
     """
 
-    PROGRAM_CODES: dict[str, int] = {
-        "unified": 192,
-        "xlow": 121,
-        "low": 83,
-        "medium": 82,
-        "high": 87,
-    }
+    UNIFIED_PROGRAM_CODE = 192
     GET_STATUS = 0       # temperature / device-state poll
     SELECT_TP = 1
     START = 2
@@ -175,7 +169,7 @@ class MedocClient:
         return (value & 0xFFFFFFFF).to_bytes(4, "big", signed=False)
 
     def _build_frame(self, cmd_id: int, param_bytes: bytes | None = None) -> bytes:
-        timestamp_be = self._u32be(socket.htonl(int(time.time())))
+        timestamp_be = self._u32be(int(time.time()))
         body = timestamp_be + cmd_id.to_bytes(1, "big")
         if param_bytes is not None:
             body += param_bytes
@@ -223,15 +217,6 @@ class MedocClient:
             )
         return raw_response
 
-    def _send_framed_command_once(
-        self, cmd_id: int, param_bytes: bytes | None = None, tag: str = ""
-    ) -> bytes:
-        self.connect()
-        try:
-            return self._send_framed_command(cmd_id, param_bytes=param_bytes, tag=tag)
-        finally:
-            self.disconnect()
-
     def _parse_response_code(self, raw_response: bytes) -> int:
         if len(raw_response) < 13:
             raise MedocResponseError(
@@ -241,111 +226,6 @@ class MedocClient:
             )
         body = raw_response[4:]
         return int.from_bytes(body[7:9], "big")
-
-    def _is_incomplete_response_error(self, exc: MedocResponseError) -> bool:
-        return exc.response_code == -1
-
-    def _is_ignorable_socket_error(self, exc: OSError) -> bool:
-        message = str(exc).lower()
-        return any(
-            pattern in message
-            for pattern in (
-                "established connection was aborted",
-                "forcibly closed by the remote host",
-                "connection reset by peer",
-                "broken pipe",
-            )
-        )
-
-    def send_program(self, pain_condition: str) -> None:
-        """Send the configured Medoc program command for a pain condition.
-
-        Uses the same MMS framed protocol as `finilized.py`:
-        1. SELECT_TP with the program code
-        2. START the selected program
-
-        Raises:
-            ValueError: If pain_condition is unknown
-            MedocTimeoutError: If response times out
-            MedocResponseError: If response indicates failure
-            RuntimeError: If socket is not connected
-        """
-        try:
-            program_code = self.PROGRAM_CODES[pain_condition]
-        except KeyError as exc:
-            valid = ", ".join(sorted(self.PROGRAM_CODES))
-            raise ValueError(f"Unknown pain condition {pain_condition!r}; expected one of: {valid}") from exc
-
-        try:
-            try:
-                select_response = self._send_framed_command_once(
-                    self.SELECT_TP,
-                    param_bytes=self._u32be(socket.htonl(program_code)),
-                    tag=f"SELECT_TP {pain_condition} (A)",
-                )
-                select_rc = self._parse_response_code(select_response)
-                if select_rc != MedocResponseCode.OK:
-                    time.sleep(self.INTER_CMD_DELAY_SEC)
-                    select_response = self._send_framed_command_once(
-                        self.SELECT_TP,
-                        param_bytes=self._u32be(program_code),
-                        tag=f"SELECT_TP {pain_condition} (B)",
-                    )
-                    select_rc = self._parse_response_code(select_response)
-                if select_rc != MedocResponseCode.OK:
-                    raise MedocResponseError(
-                        response_code=select_rc,
-                        raw_bytes=select_response,
-                        message=f"SELECT_TP failed for {pain_condition} with code {select_rc}",
-                    )
-            except MedocResponseError as exc:
-                if self._is_incomplete_response_error(exc):
-                    logger.warning(
-                        "Ignoring incomplete SELECT_TP response for %s and continuing: %s",
-                        pain_condition,
-                        exc,
-                    )
-                else:
-                    raise
-
-            time.sleep(self.INTER_CMD_DELAY_SEC)
-
-            try:
-                start_response = self._send_framed_command_once(
-                    self.START,
-                    tag=f"START {pain_condition}",
-                )
-                start_rc = self._parse_response_code(start_response)
-                if start_rc != MedocResponseCode.OK:
-                    raise MedocResponseError(
-                        response_code=start_rc,
-                        raw_bytes=start_response,
-                        message=f"START failed for {pain_condition} with code {start_rc}",
-                    )
-            except MedocResponseError as exc:
-                if self._is_incomplete_response_error(exc):
-                    logger.warning(
-                        "Ignoring incomplete START response for %s and continuing: %s",
-                        pain_condition,
-                        exc,
-                    )
-                else:
-                    raise
-
-        except socket.timeout:
-            raise MedocTimeoutError(
-                self._config.medoc_timeout,
-                f"Timeout waiting for Medoc framed response from {self._config.medoc_ip}:{self._config.medoc_port}",
-            ) from None
-        except OSError as exc:
-            if self._is_ignorable_socket_error(exc):
-                logger.warning(
-                    "Ignoring Medoc socket abort for %s and continuing: %s",
-                    pain_condition,
-                    exc,
-                )
-                return
-            raise
 
     def send_unified_program(self) -> None:
         """Send the unified program via SELECT_TP + START.
@@ -357,60 +237,33 @@ class MedocClient:
             MedocResponseError: If SELECT_TP or START fails.
             RuntimeError: If socket is not connected.
         """
-        program_code = self.PROGRAM_CODES["unified"]
         try:
-            try:
-                select_response = self._send_framed_command(
-                    self.SELECT_TP,
-                    param_bytes=self._u32be(socket.htonl(program_code)),
-                    tag=f"SELECT_TP unified (A)",
+            select_response = self._send_framed_command(
+                self.SELECT_TP,
+                param_bytes=self._u32be(self.UNIFIED_PROGRAM_CODE),
+                tag="SELECT_TP unified",
+            )
+            select_rc = self._parse_response_code(select_response)
+            if select_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=select_rc,
+                    raw_bytes=select_response,
+                    message=f"SELECT_TP failed for unified with code {select_rc}",
                 )
-                select_rc = self._parse_response_code(select_response)
-                if select_rc != MedocResponseCode.OK:
-                    time.sleep(self.INTER_CMD_DELAY_SEC)
-                    select_response = self._send_framed_command(
-                        self.SELECT_TP,
-                        param_bytes=self._u32be(program_code),
-                        tag=f"SELECT_TP unified (B)",
-                    )
-                    select_rc = self._parse_response_code(select_response)
-                if select_rc != MedocResponseCode.OK:
-                    raise MedocResponseError(
-                        response_code=select_rc,
-                        raw_bytes=select_response,
-                        message=f"SELECT_TP failed for unified with code {select_rc}",
-                    )
-            except MedocResponseError as exc:
-                if self._is_incomplete_response_error(exc):
-                    logger.warning(
-                        "Ignoring incomplete SELECT_TP response for unified and continuing: %s",
-                        exc,
-                    )
-                else:
-                    raise
 
             time.sleep(self.INTER_CMD_DELAY_SEC)
 
-            try:
-                start_response = self._send_framed_command(
-                    self.START,
-                    tag="START unified",
+            start_response = self._send_framed_command(
+                self.START,
+                tag="START unified",
+            )
+            start_rc = self._parse_response_code(start_response)
+            if start_rc != MedocResponseCode.OK:
+                raise MedocResponseError(
+                    response_code=start_rc,
+                    raw_bytes=start_response,
+                    message=f"START failed for unified with code {start_rc}",
                 )
-                start_rc = self._parse_response_code(start_response)
-                if start_rc != MedocResponseCode.OK:
-                    raise MedocResponseError(
-                        response_code=start_rc,
-                        raw_bytes=start_response,
-                        message=f"START failed for unified with code {start_rc}",
-                    )
-            except MedocResponseError as exc:
-                if self._is_incomplete_response_error(exc):
-                    logger.warning(
-                        "Ignoring incomplete START response for unified and continuing: %s",
-                        exc,
-                    )
-                else:
-                    raise
 
             time.sleep(0.2)
             try:

@@ -187,12 +187,10 @@ def mock_session_paths(temp_output_dir):
 @pytest.fixture
 def mock_medoc_client():
     """Create mock MedocClient that simulates Medoc program acknowledgments."""
-    mock_server = MockMedocServer()
-
     client = MagicMock()
     client.__enter__ = MagicMock(return_value=client)
     client.__exit__ = MagicMock(return_value=False)
-    client.send_program = MagicMock(return_value=mock_server.respond_to_program())
+    client.send_unified_program = MagicMock(return_value=None)
     return client
 
 

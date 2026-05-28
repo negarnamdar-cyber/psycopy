@@ -7,7 +7,7 @@ Usage:
     with MockMedocServer(port=5000) as server:
         client = MedocClient(MedocConfig(medoc_ip="localhost", medoc_port=5000))
         client.connect()
-        client.send_program("baseline")  # Returns OK (0x00)
+        client.send_unified_program()  # Selects and starts the unified program
         client.disconnect()
 """
 

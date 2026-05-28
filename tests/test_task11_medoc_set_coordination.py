@@ -100,7 +100,7 @@ def mock_medoc_client():
     client = MagicMock()
     client.__enter__ = MagicMock(return_value=client)
     client.__exit__ = MagicMock(return_value=False)
-    client.send_program = MagicMock(return_value=b"\x00")
+    client.send_unified_program = MagicMock(return_value=None)
     return client
 
 
