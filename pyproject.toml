@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psycopy"
+version = "0.3.0"
+description = "Speech Gating Go/No-Go Experiment for PsychoPy"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = {text = "Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)"}
+authors = [
+    {name = "Aiden Mason"}
+]
+keywords = ["psychopy", "experiment", "speech-gating", "neuroscience"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: Free for non-commercial use",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Psychology",
+]
+
+dependencies = [
+    "psychopy==2025.2.4",
+    "sounddevice>=0.4.0",
+    "scipy>=1.10.0",
+    "numpy>=1.24.0",
+    "opensmile>=2.5.0",
+    "webrtcvad-wheels>=2.0.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.6.0",
+    "black>=24.0.0",
+    "isort>=5.13.0",
+    "mypy>=1.11.0",
+]
+
+[project.scripts]
+psycopy = "psycopy.experiment:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["psycopy*"]
+
+[tool.setuptools.package-data]
+psycopy = ["stimuli.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_configs = true
