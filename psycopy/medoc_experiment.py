@@ -795,42 +795,74 @@ class MedocExperiment:
                     go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
                 )
 
-                if self.medoc_client is not None:
-                    self.medoc_client.connect()
-                    try:
-                        self.medoc_client.send_unified_program()
-                        self.logger.info(
-                            "Medoc unified program 11000000 started for speech mode"
-                        )
-                    except Exception as exc:
-                        self.logger.warning(
-                            "Failed to start unified Medoc program: %s", exc
-                        )
+                # Start continuous audio recording for the whole speech session
+                speech_audio_path = (
+                    self.session_paths.audio_dir
+                    / f"sub-{self.config.participant_id}_speech.wav"
+                )
+                self.audio.start(speech_audio_path)
+                self.currently_recording = True
+                self.event_logger.log(
+                    event_type="recording_start",
+                    trial_instance_id="",
+                    block="speech",
+                )
 
                 cycle_idx = 0
-                try:
-                    while True:
-                        pain = self.speech_pain_schedule[
-                            cycle_idx % len(self.speech_pain_schedule)
-                        ]
-                        try:
-                            self._run_speech_pain_cycle(
-                                pain,
-                                cycle_idx,
-                                self.medoc_client,
-                            )
-                        except UserAbort:
-                            self.logger.info(
-                                "Speech mode: graceful shutdown requested after cycle %d", cycle_idx
-                            )
-                            break
-                        cycle_idx += 1
-                finally:
+                while True:
+                    pain = self.speech_pain_schedule[
+                        cycle_idx % len(self.speech_pain_schedule)
+                    ]
+
+                    # Connect Medoc at the start of each 7-minute cycle
                     if self.medoc_client is not None:
+                        self.medoc_client.connect()
                         try:
-                            self.medoc_client.disconnect()
+                            self.medoc_client.send_unified_program()
+                            self.logger.info(
+                                "Medoc unified program 11000000 started for speech cycle %d",
+                                cycle_idx,
+                            )
                         except Exception as exc:
-                            self.logger.warning("Error disconnecting Medoc: %s", exc)
+                            self.logger.warning(
+                                "Failed to start unified Medoc program for cycle %d: %s",
+                                cycle_idx,
+                                exc,
+                            )
+
+                    try:
+                        self._run_speech_pain_cycle(
+                            pain,
+                            cycle_idx,
+                            self.medoc_client,
+                        )
+                    except UserAbort:
+                        self.logger.info(
+                            "Speech mode: graceful shutdown requested after cycle %d", cycle_idx
+                        )
+                        break
+                    finally:
+                        # Disconnect Medoc before the 1-minute break
+                        if self.medoc_client is not None:
+                            try:
+                                self.medoc_client.disconnect()
+                            except Exception as exc:
+                                self.logger.warning("Error disconnecting Medoc: %s", exc)
+
+                    cycle_idx += 1
+
+                # Stop continuous audio
+                if self.currently_recording:
+                    try:
+                        self.audio.stop()
+                        self.currently_recording = False
+                        self.event_logger.log(
+                            event_type="recording_end",
+                            trial_instance_id="",
+                            block="speech",
+                        )
+                    except Exception as exc:
+                        self.logger.warning("Error stopping audio: %s", exc)
 
                 self.event_logger.log(
                     event_type="experiment_complete",
