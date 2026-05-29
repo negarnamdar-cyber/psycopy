@@ -566,6 +566,46 @@ class MedocExperiment:
         )
         self.logger.info("Block %d complete: %d trials executed", set_num, len(trials))
 
+    def _poll_and_log(
+        self,
+        client: MedocClient,
+        trial_instance_id: str,
+        set_number: int,
+        trial_in_set: int,
+        timestamp: float,
+    ) -> dict[str, Any] | None:
+        """Poll Medoc for temperature/state, log the result, and return status.
+
+        Args:
+            client: Connected MedocClient.
+            trial_instance_id: Identifier for the current trial/cycle.
+            set_number: Block/cycle number.
+            trial_in_set: Trial index within block.
+            timestamp: Base timestamp for logging.
+
+        Returns:
+            Status dict from poll_status() or None on failure.
+        """
+        try:
+            status = client.poll_status()
+            self.medoc_logger.log_poll(
+                trial_instance_id=trial_instance_id,
+                set_number=set_number,
+                trial_in_set=trial_in_set,
+                timestamp=timestamp,
+                raw_bytes=status.get("raw_bytes"),
+                state_dict=status,
+            )
+            self.logger.debug(
+                "Polled Medoc: temp=%s°C state=%s",
+                status.get("temperature_celsius"),
+                status.get("device_state"),
+            )
+            return status
+        except Exception as exc:
+            self.logger.warning("Medoc poll failed: %s", exc)
+            return None
+
     def _show_break_screen(self, duration: float = BLOCK_BREAK_SEC) -> None:
         """Show a break screen with countdown timer.
 
