@@ -462,7 +462,24 @@ class MedocClient:
         raw_response = self._send_framed_command_once(
             self.GET_STATUS,
             tag=tag,
+            allow_incomplete=True,
         )
+        if len(raw_response) < 16:
+            logger.debug(
+                "poll_status incomplete response (%d bytes), returning partial",
+                len(raw_response),
+            )
+            return {
+                "timestamp": 0,
+                "command_id": self.GET_STATUS,
+                "response_code": -1,
+                "temperature_celsius": None,
+                "device_state": None,
+                "test_state": None,
+                "tms": 0,
+                "ttl": 0,
+                "raw_bytes": raw_response,
+            }
         return self._parse_status(raw_response)
 
     def _parse_status(self, raw_response: bytes) -> dict[str, Any]:
