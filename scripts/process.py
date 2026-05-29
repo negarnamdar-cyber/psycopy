@@ -217,18 +217,87 @@ def _resolve_wav(audio_dir: Path, trial_instance_id: str, block: str) -> Path | 
     return None
 
 
-def find_stop_cues(events_csv: Path, trial_instance_id: str) -> list[float]:
-    """Return trial-relative stop-cue times from events.csv."""
-    cues: list[float] = []
-    for row in load_events_csv(events_csv):
+def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
+    """Return all GO and STOP cues for a trial from events.csv.
+
+    New-format sessions have explicit ``go_cue`` / ``stop_cue`` events.
+    Old-format sessions have ``trial_start`` with ``go_durations`` in
+    ``event_data`` — we reconstruct the cue times from that.
+
+    Returns list of dicts with keys: ``cue_type`` ("go"|"stop"),
+    ``timestamp_sec``, ``segment_index``.
+    """
+    cues: list[dict[str, Any]] = []
+    events = load_events_csv(events_csv)
+
+    # --- New format: explicit go_cue / stop_cue events --------------------
+    for row in events:
         if row.get("trial_instance_id") != trial_instance_id:
             continue
-        if row.get("event_type") != "stop_cue":
+        et = row.get("event_type", "")
+        if et not in ("go_cue", "stop_cue"):
             continue
         data = _parse_event_data(row.get("event_data", ""))
         elapsed = data.get("trial_elapsed_sec")
         if elapsed is not None:
-            cues.append(float(elapsed))
+            cues.append(
+                {
+                    "cue_type": "go" if et == "go_cue" else "stop",
+                    "timestamp_sec": float(elapsed),
+                    "segment_index": data.get("segment_index", 0),
+                }
+            )
+
+    if cues:
+        cues.sort(key=lambda x: x["timestamp_sec"])
+        return cues
+
+    # --- Old format: reconstruct from trial_start event_data --------------
+    for row in events:
+        if row.get("trial_instance_id") != trial_instance_id:
+            continue
+        if row.get("event_type") != "trial_start":
+            continue
+        data = _parse_event_data(row.get("event_data", ""))
+        go_durations = data.get("go_durations", [])
+        if not go_durations:
+            continue
+
+        total_go = sum(float(d) for d in go_durations)
+        num_stop_periods = len(go_durations) + 1
+        stop_duration = (60.0 - total_go) / num_stop_periods
+
+        elapsed = 0.0
+        for idx, go_dur in enumerate(go_durations):
+            # STOP cue
+            cues.append(
+                {
+                    "cue_type": "stop",
+                    "timestamp_sec": round(elapsed, 3),
+                    "segment_index": idx,
+                }
+            )
+            elapsed += stop_duration
+            # GO cue
+            cues.append(
+                {
+                    "cue_type": "go",
+                    "timestamp_sec": round(elapsed, 3),
+                    "segment_index": idx,
+                }
+            )
+            elapsed += float(go_dur)
+
+        # Final STOP cue
+        cues.append(
+            {
+                "cue_type": "stop",
+                "timestamp_sec": round(elapsed, 3),
+                "segment_index": len(go_durations),
+            }
+        )
+
+    cues.sort(key=lambda x: x["timestamp_sec"])
     return cues
 
 
@@ -294,15 +363,19 @@ def standardize_16k_mono(input_path: Path, output_path: Path) -> Path:
 
 def run_vad(
     wav_path: Path,
-    stop_cues: list[float],
+    cues: list[dict[str, Any]],
     aggressiveness: int = _VAD_CONFIG["aggressiveness"],
     frame_duration_ms: int = _VAD_CONFIG["frame_duration_ms"],
     silence_frames: int = _VAD_CONFIG["silence_frames"],
 ) -> list[dict[str, Any]]:
-    """Run WebRTC VAD on a WAV file and match stop-cue latencies.
+    """Run WebRTC VAD on a WAV file and compute GO-onset and STOP-cue latencies.
+
+    For each GO cue, finds the first speech_start after the cue → ``go_latency_ms``.
+    For each STOP cue, finds the first speech_end after the cue → ``stop_latency_ms``.
 
     Returns rows with keys:
-        event_type, timestamp, speech_duration, stop_cue_index, latency_ms
+        event_type, timestamp, speech_duration, cue_type, cue_index,
+        latency_ms, go_latency_ms, stop_latency_ms
     """
     if webrtcvad is None:
         logger.warning("webrtcvad not installed — skipping VAD")
@@ -369,53 +442,71 @@ def run_vad(
             }
         )
 
-    # Match stop cues
+    # Build latency rows from cues
+    go_cues = [c for c in cues if c["cue_type"] == "go"]
+    stop_cues = [c for c in cues if c["cue_type"] == "stop"]
+
     rows: list[dict[str, Any]] = []
-    for idx, cue in enumerate(stop_cues):
-        best_end = next(
-            (ev for ev in speech_events if ev["type"] == "speech_end" and ev["timestamp"] >= cue),
+
+    # GO latencies: first speech_start after each GO cue
+    for idx, cue in enumerate(go_cues):
+        best_start = next(
+            (
+                ev
+                for ev in speech_events
+                if ev["type"] == "speech_start" and ev["timestamp"] >= cue["timestamp_sec"]
+            ),
             None,
         )
-        if best_end:
-            latency_ms = (best_end["timestamp"] - cue) * 1000.0
-            rows.append(
-                {
-                    "event_type": "speech_end",
-                    "timestamp": best_end["timestamp"],
-                    "speech_duration": best_end.get("speech_duration", ""),
-                    "stop_cue_index": idx,
-                    "latency_ms": round(latency_ms, 1),
-                }
-            )
-        else:
-            rows.append(
-                {
-                    "event_type": "speech_end",
-                    "timestamp": "",
-                    "speech_duration": "",
-                    "stop_cue_index": idx,
-                    "latency_ms": "",
-                }
-            )
+        latency_ms = (
+            (best_start["timestamp"] - cue["timestamp_sec"]) * 1000.0
+            if best_start
+            else None
+        )
+        rows.append(
+            {
+                "event_type": "speech_start",
+                "timestamp": best_start["timestamp"] if best_start else "",
+                "speech_duration": "",
+                "cue_type": "go",
+                "cue_index": idx,
+                "latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
+                "go_latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
+                "stop_latency_ms": "",
+            }
+        )
 
-    # Add unmatched speech_start events
-    for ev in speech_events:
-        if ev["type"] == "speech_start":
-            rows.append(
-                {
-                    "event_type": "speech_start",
-                    "timestamp": ev["timestamp"],
-                    "speech_duration": "",
-                    "stop_cue_index": "",
-                    "latency_ms": "",
-                }
-            )
+    # STOP latencies: first speech_end after each STOP cue
+    for idx, cue in enumerate(stop_cues):
+        best_end = next(
+            (
+                ev
+                for ev in speech_events
+                if ev["type"] == "speech_end" and ev["timestamp"] >= cue["timestamp_sec"]
+            ),
+            None,
+        )
+        latency_ms = (
+            (best_end["timestamp"] - cue["timestamp_sec"]) * 1000.0 if best_end else None
+        )
+        rows.append(
+            {
+                "event_type": "speech_end",
+                "timestamp": best_end["timestamp"] if best_end else "",
+                "speech_duration": best_end.get("speech_duration", "") if best_end else "",
+                "cue_type": "stop",
+                "cue_index": idx,
+                "latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
+                "go_latency_ms": "",
+                "stop_latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
+            }
+        )
 
     # Deduplicate
     seen: set[str] = set()
     unique: list[dict[str, Any]] = []
     for ev in rows:
-        key = f"{ev['event_type']}:{ev.get('timestamp')}"
+        key = f"{ev['cue_type']}:{ev['cue_index']}:{ev.get('timestamp')}"
         if key in seen:
             continue
         seen.add(key)
@@ -437,8 +528,8 @@ def process_vad_for_session(session: SessionInfo) -> dict[str, Any]:
             skipped += 1
             continue
 
-        stop_cues = find_stop_cues(session.events_csv, rec.trial_instance_id)
-        events = run_vad(rec.wav_path, stop_cues)
+        cues = find_cues(session.events_csv, rec.trial_instance_id)
+        events = run_vad(rec.wav_path, cues)
         for ev in events:
             vad_rows.append({"trial_instance_id": rec.trial_instance_id, **ev})
         processed += 1

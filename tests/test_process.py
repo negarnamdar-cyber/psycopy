@@ -164,12 +164,47 @@ class TestProcessSession:
         assert len(samples) == 44100
         assert -1.0 <= samples.max() <= 1.0
 
-    def test_find_stop_cues(self, tmp_vowel_session: Path):
-        from scripts.process import find_stop_cues
+    def test_find_cues_new_format(self, tmp_vowel_session: Path):
+        from scripts.process import find_cues
 
-        cues = find_stop_cues(tmp_vowel_session / "events.csv", "001_01_block0_000")
-        assert len(cues) == 1
-        assert cues[0] == 0.1
+        cues = find_cues(tmp_vowel_session / "events.csv", "001_01_block0_000")
+        assert len(cues) == 2  # one stop + one go
+        stop_cues = [c for c in cues if c["cue_type"] == "stop"]
+        go_cues = [c for c in cues if c["cue_type"] == "go"]
+        assert len(stop_cues) == 1
+        assert len(go_cues) == 1
+        assert stop_cues[0]["timestamp_sec"] == 0.1
+        assert go_cues[0]["timestamp_sec"] == 0.3
+
+    def test_find_cues_old_format(self, tmp_vowel_session: Path):
+        """Old sessions have trial_start with go_durations, not explicit cues."""
+        from scripts.process import find_cues
+
+        # Build a fake old-format events.csv
+        events_csv = tmp_vowel_session / "old_events.csv"
+        with events_csv.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_ALL)
+            writer.writerow(["event_type", "timestamp", "trial_instance_id", "block", "event_data"])
+            writer.writerow([
+                "trial_start", "0.0", "old_01_block0_000", "block0",
+                json.dumps({"task_type": "vowel", "num_go_segments": 2, "go_durations": [3.0, 4.0]}),
+            ])
+
+        cues = find_cues(events_csv, "old_01_block0_000")
+        # With 2 GO segments (3s + 4s = 7s total go) in a 60s trial:
+        # stop_duration = (60 - 7) / 3 = 17.666...
+        # Expected: STOP[0] -> GO[0] -> STOP[1] -> GO[1] -> STOP[2]
+        assert len(cues) == 5
+        assert cues[0]["cue_type"] == "stop"
+        assert cues[0]["segment_index"] == 0
+        assert cues[1]["cue_type"] == "go"
+        assert cues[1]["segment_index"] == 0
+        assert cues[2]["cue_type"] == "stop"
+        assert cues[2]["segment_index"] == 1
+        assert cues[3]["cue_type"] == "go"
+        assert cues[3]["segment_index"] == 1
+        assert cues[4]["cue_type"] == "stop"
+        assert cues[4]["segment_index"] == 2
 
     def test_discover_recordings_vowel(self, tmp_vowel_session: Path):
         from scripts.process import discover_recordings
@@ -197,11 +232,14 @@ class TestProcessSession:
         assert (tmp_vowel_session / "summary.csv").exists()
         assert (tmp_vowel_session / "processed.json").exists()
 
-        # VAD rows should include speech_start / speech_end
+        # VAD rows should include speech_start / speech_end with latency cols
         with (tmp_vowel_session / "vad_events.csv").open("r", newline="") as f:
             rows = list(csv.DictReader(f))
         assert len(rows) > 0
         assert "speech_start" in [r["event_type"] for r in rows]
+        assert "cue_type" in rows[0]
+        assert "go_latency_ms" in rows[0]
+        assert "stop_latency_ms" in rows[0]
 
     def test_process_speech_session_creates_outputs(self, tmp_speech_session: Path):
         from scripts.process import process_session
