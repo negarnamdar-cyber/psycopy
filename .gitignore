@@ -44,8 +44,8 @@ venv.bak/
 Thumbs.db
 
 # Experiment data
-#/data/
-#/data/**
+/data/
+/data/**
 *.wav
 *.csv
 *.json
