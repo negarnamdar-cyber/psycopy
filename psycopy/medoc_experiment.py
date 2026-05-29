@@ -13,14 +13,13 @@ Two experiment modes are supported:
      - STOP segments are brief (~0.5s) between GOs
      - Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
    - 1-minute break between blocks
-   - Pain conditions: xlow (8), low (8), medium (7), high (7)
-   - Total experiment time: ~35 minutes (30 trials x 60s + 4 breaks x 60s)
+    - Total experiment time: ~35 minutes (30 trials x 60s + 4 breaks x 60s)
 
 2. Speech mode (SPEECH):
    - Free speech interview with thermal stimulation
    - Researchers ask questions while the screen shows "SPEAK"
-   - Behind the scenes: randomized pain schedule with 6 minutes on,
-     1 minute off (repeating until researcher stops)
+   - Behind the scenes: continuous unified Medoc program (experiment 192)
+     with 6 minutes on, 1 minute off (repeating until researcher stops)
    - Only graceful shutdown (Q + 12345) stops the experiment
    - ESC is disabled — only coded shutdown works
 """
@@ -33,6 +32,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from random import Random
+from typing import Any
 
 from psycopy.audio import AudioService
 from psycopy.config import ExperimentConfig, ExperimentMode
@@ -89,7 +89,6 @@ class MedocExperiment:
     - Each trial: 60 seconds of alternating STOP/GO
     - 3-7 GO segments per trial, each 3-7 seconds
     - 1-minute break between blocks
-    - Pain conditions: xlow (8), low (8), medium (7), high (7)
 
     Example:
         >>> config = ExperimentConfig(
@@ -160,10 +159,9 @@ class MedocExperiment:
             else 5
         )
 
-        # Speech mode: no structured trials; pain schedule generated later
+        # Speech mode: no structured trials
         if config.mode == ExperimentMode.SPEECH:
             self.trials = []
-            self.speech_pain_schedule = self._generate_speech_pain_schedule()
         else:
             self.trials = generate_trials(
                 num_sets=num_blocks,
@@ -171,7 +169,6 @@ class MedocExperiment:
                 num_stop_trials_ratio=0.0,
                 rng=self.rng,
             )
-            self.speech_pain_schedule = []
 
         self.currently_recording = False
         self._current_set = 0
@@ -194,7 +191,7 @@ class MedocExperiment:
         Does NOT connect to Medoc device (per-trial connection).
 
         Args:
-            trial_config: Configuration for this trial (task_type, pain_condition,
+            trial_config: Configuration for this trial (task_type,
                 num_go_segments, go_segment_durations).
 
         Note:
@@ -202,9 +199,8 @@ class MedocExperiment:
             (connect, send command, disconnect) happens in run_trial.
         """
         logger.debug(
-            "Setting up trial: type=%s pain=%s segments=%d",
+            "Setting up trial: type=%s segments=%d",
             trial_config.task_type,
-            trial_config.pain_condition,
             trial_config.num_go_segments,
         )
         if self.audio.vad_enabled:
@@ -290,7 +286,6 @@ class MedocExperiment:
             block=f"block{set_num}",
             event_data={
                 "task_type": trial_config.task_type,
-                "pain_condition": trial_config.pain_condition,
                 "num_go_segments": trial_config.num_go_segments,
                 "go_durations": list(trial_config.go_segment_durations),
             },
@@ -318,10 +313,9 @@ class MedocExperiment:
                     timestamp=trigger_timestamp,
                 )
                 self.logger.info(
-                    "Trial %d.%d started (pain=%s) at %.3f",
+                    "Trial %d.%d started at %.3f",
                     set_num,
                     trial_num,
-                    trial_config.pain_condition,
                     trigger_timestamp,
                 )
             else:
@@ -360,16 +354,22 @@ class MedocExperiment:
                 self._display_state(TaskState.STOP, stimulus_text)
                 self.ui.wait(stop_duration)
 
-                # Periodic Medoc poll every ~30 s
+                # Periodic Medoc poll every ~30 s — capture temperature into record
                 elapsed = time.monotonic() - trigger_timestamp
                 if client is not None and elapsed >= next_poll_at:
-                    self._poll_and_log(
+                    status = self._poll_and_log(
                         client,
                         trial_instance_id,
                         set_num,
                         trial_num,
                         time.monotonic(),
                     )
+                    if status is not None:
+                        temperature_celsius = status.get("temperature_celsius")
+                        temperature_raw = status.get("raw_bytes")
+                        device_state = status.get("device_state")
+                        test_state = status.get("test_state")
+                        response_code = status.get("response_code")
                     next_poll_at += 30.0
 
                 # GO segment - participant says "Ahh"
@@ -394,15 +394,21 @@ class MedocExperiment:
             if remaining > 0:
                 self.ui.wait(remaining)
 
-            # Final poll if we haven't polled recently
+            # Final poll if we haven't polled recently — capture temperature into record
             if client is not None:
-                self._poll_and_log(
+                status = self._poll_and_log(
                     client,
                     trial_instance_id,
                     set_num,
                     trial_num,
                     time.monotonic(),
                 )
+                if status is not None:
+                    temperature_celsius = status.get("temperature_celsius")
+                    temperature_raw = status.get("raw_bytes")
+                    device_state = status.get("device_state")
+                    test_state = status.get("test_state")
+                    response_code = status.get("response_code")
 
             # Stop audio
             if audio_started or self.currently_recording:
@@ -435,6 +441,9 @@ class MedocExperiment:
                 except Exception as exc:
                     self.logger.warning("Error stopping VAD: %s", exc)
 
+        except UserAbort:
+            self.logger.info("Trial %d.%d interrupted by graceful shutdown", set_num, trial_num)
+            raise
         except Exception as exc:
             self.logger.exception("Error during trial %d.%d: %s", set_num, trial_num, exc)
             raise
@@ -481,10 +490,9 @@ class MedocExperiment:
         )
 
         self.logger.info(
-            "Trial %d.%d complete: pain=%s segments=%d duration=%.3fs",
+            "Trial %d.%d complete: segments=%d duration=%.3fs",
             set_num,
             trial_num,
-            trial_config.pain_condition,
             trial_config.num_go_segments,
             actual_duration,
         )
@@ -494,7 +502,6 @@ class MedocExperiment:
             set_number=set_num,
             trial_in_set=trial_num,
             task_type=trial_config.task_type,
-            pain_condition=trial_config.pain_condition,
             is_stop_trial=False,
             trigger_timestamp=trigger_timestamp,
             status_timestamp=status_timestamp,
@@ -527,10 +534,9 @@ class MedocExperiment:
                 record = self.run_trial(set_num, trial_num, trial_config, client=client)
                 self.trial_logger.log_trial(record)
                 self.logger.info(
-                    "Logged trial %d.%d: pain=%s segments=%d",
+                    "Logged trial %d.%d: segments=%d",
                     set_num,
                     trial_num,
-                    trial_config.pain_condition,
                     trial_config.num_go_segments,
                 )
             except UserAbort:
@@ -591,77 +597,20 @@ class MedocExperiment:
             self.ui._check_escape()
             self.ui.core.wait(0.1)
 
-    def _generate_speech_pain_schedule(self) -> list[str]:
-        """Generate a randomized pain condition schedule for speech mode.
-
-        Creates a repeating pool of pain conditions: 8 xlow + 8 low + 7 medium + 7 high,
-        shuffles them, and returns as a flat list. The schedule loops as needed.
-
-        Returns:
-            List of pain condition strings in randomized order.
-        """
-        pain_pool = (
-            ["xlow"] * 8
-            + ["low"] * 8
-            + ["medium"] * 7
-            + ["high"] * 7
-        )
-        self.rng.shuffle(pain_pool)
-        self.logger.info("Speech mode: generated pain schedule with %d conditions", len(pain_pool))
-        return pain_pool
-
-    def _poll_and_log(
-        self,
-        client: MedocClient,
-        trial_instance_id: str,
-        set_number: int,
-        trial_in_set: int,
-        timestamp: float,
-    ) -> None:
-        """Poll Medoc for temperature/state and log the result.
-
-        Args:
-            client: Connected MedocClient.
-            trial_instance_id: Identifier for the current trial/cycle.
-            set_number: Block/cycle number.
-            trial_in_set: Trial index within block.
-            timestamp: Base timestamp for logging.
-        """
-        try:
-            status = client.poll_status()
-            self.medoc_logger.log_poll(
-                trial_instance_id=trial_instance_id,
-                set_number=set_number,
-                trial_in_set=trial_in_set,
-                timestamp=timestamp,
-                raw_bytes=status.get("raw_bytes"),
-                state_dict=status,
-            )
-            self.logger.debug(
-                "Polled Medoc: temp=%s°C state=%s",
-                status.get("temperature_celsius"),
-                status.get("device_state"),
-            )
-        except Exception as exc:
-            self.logger.warning("Medoc poll failed: %s", exc)
-
     def _run_speech_pain_cycle(
         self,
-        pain_condition: str,
         cycle_idx: int,
         client: MedocClient | None,
     ) -> None:
         """Run one 6-minute pain + 1-minute pause cycle for speech mode.
 
         Args:
-            pain_condition: Pain level label (for display/logging only).
             cycle_idx: Zero-based cycle index for logging.
             client: Already-connected MedocClient, or None in testing mode.
         """
         self.logger.info(
-            "Speech mode: starting pain cycle %d with condition %s",
+            "Speech mode: starting pain cycle %d",
             cycle_idx,
-            pain_condition,
         )
         self.event_logger.log(
             event_type="pain_cycle_start",
@@ -669,7 +618,6 @@ class MedocExperiment:
             block="speech",
             event_data={
                 "cycle_idx": cycle_idx,
-                "pain_condition": pain_condition,
             },
         )
 
@@ -686,7 +634,7 @@ class MedocExperiment:
 
         # Pain on for 6 minutes (360 seconds); poll every 30 s.
         self._show_speech_screen_with_timer(
-            360.0, pain_condition, cycle_idx, client, trial_instance_id
+            360.0, cycle_idx, client, trial_instance_id
         )
 
         # 1-minute pause (break) between cycles
@@ -703,7 +651,6 @@ class MedocExperiment:
     def _show_speech_screen_with_timer(
         self,
         duration: float,
-        pain_condition: str,
         cycle_idx: int,
         client: MedocClient | None,
         trial_instance_id: str,
@@ -715,7 +662,6 @@ class MedocExperiment:
 
         Args:
             duration: Duration in seconds (6 minutes = 360).
-            pain_condition: Current pain condition label.
             cycle_idx: Current cycle index.
             client: Already-connected MedocClient, or None.
             trial_instance_id: Identifier for logging polls.
@@ -745,7 +691,7 @@ class MedocExperiment:
                 minutes = displayed_second // 60
                 seconds = displayed_second % 60
                 self.ui.sentence_text.text = (
-                    f"SPEAK\n\n{minutes:01d}:{seconds:02d}\n\n{pain_condition.upper()}"
+                    f"SPEAK\n\n{minutes:01d}:{seconds:02d}"
                 )
                 self.ui.sentence_text.pos = (0, 0.05)
                 self.ui.sentence_text.height = 0.08
@@ -817,9 +763,6 @@ class MedocExperiment:
 
                 cycle_idx = 0
                 while True:
-                    pain = self.speech_pain_schedule[
-                        cycle_idx % len(self.speech_pain_schedule)
-                    ]
                     speech_client: MedocClient | None = None
 
                     # Connect Medoc at the start of each 7-minute cycle
@@ -841,7 +784,6 @@ class MedocExperiment:
 
                     try:
                         self._run_speech_pain_cycle(
-                            pain,
                             cycle_idx,
                             speech_client,
                         )

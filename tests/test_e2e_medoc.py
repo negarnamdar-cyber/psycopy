@@ -3,7 +3,6 @@
 Tests verify:
 - 5 blocks x 6 trials = 30 trials total
 - All trials are vowel trials
-- Pain conditions: 8 xlow, 8 low, 7 medium, 7 high across all 30
 - Each trial has 3-7 GO segments, each 3-7 seconds
 - All CSV files created (trials.csv, medoc_events.csv, vad_events.csv, events.csv)
 - Config snapshot exists (config.json)
@@ -337,57 +336,6 @@ class TestFullExperimentOutput:
                 f"Expected 0 sentence trials, got {sentence_count}"
             )
 
-    def test_e2e_pain_condition_distribution_across_all(
-        self,
-        temp_output_dir,
-        mock_session_paths,
-        mock_medoc_client,
-        mock_audio,
-        mock_ui,
-        mock_logger,
-    ):
-        """QA Scenario: Validate 8 xlow + 8 low + 7 medium + 7 high across all 30."""
-        from psycopy.medoc_experiment import MedocExperiment
-
-        with (
-            patch("psycopy.medoc_experiment.MedocClient", return_value=mock_medoc_client),
-            patch("psycopy.medoc_experiment.PsychoPyUI", return_value=mock_ui),
-            patch("psycopy.medoc_experiment.AudioService", return_value=mock_audio),
-            patch("psycopy.medoc_experiment.validate_config"),
-            patch("psycopy.medoc_experiment.get_run_metadata", return_value={"version": "0.3.0"}),
-            patch("psycopy.medoc_experiment.configure_logging", return_value=mock_logger),
-            patch("psycopy.medoc_experiment.save_config_snapshot"),
-            patch(
-                "psycopy.medoc_experiment.create_output_directory",
-                return_value=mock_session_paths,
-            ),
-            patch("time.sleep"),
-        ):
-            config = ExperimentConfig(
-                participant_id="TEST001",
-                session_id="01",
-                random_seed="42",
-                medoc_config=MedocConfig(medoc_ip="192.168.1.100", medoc_port=5000),
-                vad_enabled=True,
-            )
-
-            exp = MedocExperiment(config)
-            exp.audio = mock_audio
-            exp._show_break_screen = MagicMock()
-            exp.run()
-
-            trials = exp.trial_logger.trials
-            pain_conditions = [t.pain_condition for t in trials]
-            xlow_count = pain_conditions.count("xlow")
-            low_count = pain_conditions.count("low")
-            medium_count = pain_conditions.count("medium")
-            high_count = pain_conditions.count("high")
-
-            assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
-            assert low_count == 8, f"Expected 8 low, got {low_count}"
-            assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
-            assert high_count == 7, f"Expected 7 high, got {high_count}"
-
     def test_e2e_go_segments_per_trial(self,
         temp_output_dir,
         mock_session_paths,
@@ -536,7 +484,6 @@ class TestCSVOutputValidation:
                 "set_number",
                 "trial_in_set",
                 "task_type",
-                "pain_condition",
                 "is_stop_trial",
                 "trigger_timestamp",
             ]
@@ -811,22 +758,6 @@ class TestTrialGeneratorValidation:
                     f"Block {block_idx} Trial {trial_idx}: expected vowel, got {trial.task_type}"
                 )
 
-    def test_pain_condition_distribution(self):
-        """Validate: 8 xlow + 8 low + 7 medium + 7 high across all 30."""
-        rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
-
-        all_pain = [t.pain_condition for block in trials for t in block]
-        xlow_count = all_pain.count("xlow")
-        low_count = all_pain.count("low")
-        medium_count = all_pain.count("medium")
-        high_count = all_pain.count("high")
-
-        assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
-        assert low_count == 8, f"Expected 8 low, got {low_count}"
-        assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
-        assert high_count == 7, f"Expected 7 high, got {high_count}"
-
     def test_go_segments_in_range(self):
         """Validate: Each trial has 3-7 GO segments."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
@@ -876,8 +807,8 @@ class TestTrialGeneratorValidation:
                 assert t1.task_type == t2.task_type, (
                     f"Block {block_idx} Trial {trial_idx}: task_type mismatch"
                 )
-                assert t1.pain_condition == t2.pain_condition, (
-                    f"Block {block_idx} Trial {trial_idx}: pain_condition mismatch"
+                assert t1.task_type == t2.task_type, (
+                    f"Block {block_idx} Trial {trial_idx}: task_type mismatch"
                 )
                 assert t1.num_go_segments == t2.num_go_segments, (
                     f"Block {block_idx} Trial {trial_idx}: num_go_segments mismatch"

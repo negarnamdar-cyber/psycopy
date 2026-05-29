@@ -359,13 +359,17 @@ class MedocClient:
         rc = self._parse_response_code_or_none(raw)
         if rc not in (None, MedocResponseCode.OK):
             logger.warning("START %s response code=%s", self.UNIFIED_PROGRAM_LABEL, rc)
+            return False
 
         time.sleep(0.2)
         try:
             status = self.poll_status(tag=f"VERIFY_START({self.UNIFIED_PROGRAM_LABEL})")
         except Exception as exc:
-            logger.warning("Could not verify unified program status: %s", exc)
-            return False
+            logger.warning(
+                "Could not verify unified program status after START; continuing anyway: %s",
+                exc,
+            )
+            return True
 
         if status.get("test_state") == 1:
             logger.info("Unified program verified running (test_state=1)")

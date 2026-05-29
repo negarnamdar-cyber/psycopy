@@ -353,28 +353,6 @@ class TestTrialGenerator:
             assert vowel_count == 6, f"Block {block_idx}: expected 6 vowel, got {vowel_count}"
             assert sentence_count == 0, f"Block {block_idx}: expected 0 sentence, got {sentence_count}"
 
-    def test_pain_distribution_across_all(self):
-        from random import Random
-
-        rng = Random(42)
-        trials = generate_trials(
-            num_sets=5,
-            trials_per_set=6,
-            num_stop_trials_ratio=0.0,
-            rng=rng,
-        )
-
-        all_pain = [t.pain_condition for block in trials for t in block]
-        xlow_count = all_pain.count("xlow")
-        low_count = all_pain.count("low")
-        medium_count = all_pain.count("medium")
-        high_count = all_pain.count("high")
-
-        assert xlow_count == 8, f"Expected 8 xlow, got {xlow_count}"
-        assert low_count == 8, f"Expected 8 low, got {low_count}"
-        assert medium_count == 7, f"Expected 7 medium, got {medium_count}"
-        assert high_count == 7, f"Expected 7 high, got {high_count}"
-
     def test_go_segments_in_range(self):
         from random import Random
 
@@ -440,7 +418,6 @@ class TestTrialGenerator:
                 t1 = trials1[block_idx][trial_idx]
                 t2 = trials2[block_idx][trial_idx]
                 assert t1.task_type == t2.task_type
-                assert t1.pain_condition == t2.pain_condition
                 assert t1.num_go_segments == t2.num_go_segments
                 assert t1.go_segment_durations == t2.go_segment_durations
 
@@ -456,7 +433,6 @@ class TestMedocTrialRecord:
             set_number=0,
             trial_in_set=1,
             task_type="vowel",
-            pain_condition="baseline",
             is_stop_trial=True,
             trigger_timestamp=123.456,
             status_timestamp=128.456,
@@ -472,7 +448,6 @@ class TestMedocTrialRecord:
         assert d["set_number"] == 0
         assert d["trial_in_set"] == 1
         assert d["task_type"] == "vowel"
-        assert d["pain_condition"] == "baseline"
         assert d["is_stop_trial"] is True
         assert d["trigger_timestamp"] == 123.456
         assert d["temperature_raw"] == "0000c842"
@@ -486,7 +461,6 @@ class TestMedocTrialRecord:
             set_number=0,
             trial_in_set=1,
             task_type="sentence",
-            pain_condition="low",
             is_stop_trial=False,
             trigger_timestamp=100.0,
         )
@@ -626,12 +600,6 @@ class TestFiveBlockRun:
             sum(1 for t in block_trials if t.task_type == "sentence") for block_trials in all_trials
         )
         assert sentence_trials == 0
-
-        all_pain = [t.pain_condition for block in all_trials for t in block]
-        assert all_pain.count("xlow") == 8
-        assert all_pain.count("low") == 8
-        assert all_pain.count("medium") == 7
-        assert all_pain.count("high") == 7
 
     def test_trial_iteration_order(self):
         """Verify trials are iterated in correct order."""

@@ -3,8 +3,8 @@
 Generates trial schedules with constrained randomization.
 
 Structure: 5 blocks of 6 trials = 30 total trials.
-Pain conditions: xlow (8), low (8), medium (7), high (7) across all blocks.
 Each trial is a 60-second vowel task with alternating STOP/GO segments.
+All trials use the unified Medoc program (experiment 192).
 """
 
 from __future__ import annotations
@@ -19,14 +19,12 @@ class TrialConfig:
 
     Attributes:
         task_type: Always "vowel"
-        pain_condition: "xlow", "low", "medium", or "high"
         num_go_segments: Number of GO segments within the 60s trial (3-7)
         go_segment_durations: Tuple of GO segment durations (seconds), each
             between 3 and 7. Sum must be < 60 so STOP periods can fill the rest.
     """
 
     task_type: str
-    pain_condition: str
     num_go_segments: int
     go_segment_durations: tuple[float, ...]
 
@@ -38,13 +36,12 @@ class TrialConfig:
             return NotImplemented
         return (
             self.task_type == other.task_type
-            and self.pain_condition == other.pain_condition
             and self.num_go_segments == other.num_go_segments
             and self.go_segment_durations == other.go_segment_durations
         )
 
     def __hash__(self) -> int:
-        return hash((self.task_type, self.pain_condition, self.num_go_segments, self.go_segment_durations))
+        return hash((self.task_type, self.num_go_segments, self.go_segment_durations))
 
 
 def _generate_go_durations(
@@ -84,13 +81,9 @@ def generate_trials(
 ) -> list[list[TrialConfig]]:
     """Generate randomized trial schedule.
 
-    Generates 5 blocks of 6 trials each (30 total). Pain conditions are:
-    - xlow: 8 trials
-    - low: 8 trials
-    - medium: 7 trials
-    - high: 7 trials
-
+    Generates 5 blocks of 6 trials each (30 total).
     Each trial has 3-7 GO segments (each 3-7 seconds) within a 60-second window.
+    All trials use the unified Medoc program (experiment 192).
     `num_stop_trials_ratio` and the `num_sets` / `trials_per_set` arguments are
     ignored (retained for API compatibility).
 
@@ -106,24 +99,11 @@ def generate_trials(
     num_blocks = 5
     trials_per_block = 6
 
-    # Pain pool: 8 xlow + 8 low + 7 medium + 7 high = 30
-    pain_pool = (
-        ["xlow"] * 8
-        + ["low"] * 8
-        + ["medium"] * 7
-        + ["high"] * 7
-    )
-    rng.shuffle(pain_pool)
-
     all_blocks: list[list[TrialConfig]] = []
-    idx = 0
 
     for _ in range(num_blocks):
         block: list[TrialConfig] = []
         for _ in range(trials_per_block):
-            pain = pain_pool[idx]
-            idx += 1
-
             num_go = rng.randint(3, 7)
             # Reserve ~1 s per STOP period so there is always some STOP time.
             # With (num_go + 1) STOP periods, reserve that many seconds.
@@ -141,7 +121,6 @@ def generate_trials(
             block.append(
                 TrialConfig(
                     task_type="vowel",
-                    pain_condition=pain,
                     num_go_segments=num_go,
                     go_segment_durations=go_durs,
                 )

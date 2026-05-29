@@ -129,7 +129,6 @@ class MedocTrialRecord:
     set_number: int
     trial_in_set: int
     task_type: str  # always "vowel"
-    pain_condition: str  # "xlow", "low", "medium", "high"
     is_stop_trial: bool
     trigger_timestamp: float
     status_timestamp: float | None = None
