@@ -1,6 +1,0 @@
-"block","event_data","event_type","timestamp","trial_instance_id"
-"","{""participant_id"": ""001"", ""mode"": ""speech""}","experiment_start","0.0",""
-"speech","{""audio_type"": ""speech""}","recording_start","1.7659999999996217",""
-"speech","{""cycle_idx"": 0}","pain_cycle_start","3.4689999999991414",""
-"speech","","recording_end","49.625",""
-"","{""total_cycles"": 1, ""mode"": ""speech""}","experiment_complete","49.625",""
