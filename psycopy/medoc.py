@@ -73,21 +73,16 @@ class ConnectionState(IntEnum):
 
 
 class MedocClient:
-    """TCP socket client for Medoc thermode device communication.
-
-    Manages the unified Medoc thermal program:
-    - Reachability check -> STOP/ready -> SELECT_TP unified -> START
-    - Each MMS command uses its own short TCP connection, matching Medoc MMS behavior.
-    """
+    """TCP socket client for Medoc thermode device communication."""
 
     UNIFIED_PROGRAM_CODE = 192  # Binary 11000000
     UNIFIED_PROGRAM_LABEL = "unified"
-    GET_STATUS = 0       # temperature / device-state poll
+    GET_STATUS = 0
     SELECT_TP = 1
     START = 2
     STOP = 5
     INTER_CMD_DELAY_SEC = 0.5
-    COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
+    COMMAND_RESPONSE_TIMEOUT_SEC = 5.0  # Increased from 2.0
 
     def __init__(self, config: MedocConfig) -> None:
         self._config = config
@@ -99,12 +94,7 @@ class MedocClient:
         return self._state
 
     def connect(self) -> None:
-        """Establish TCP connection to Medoc device.
-
-        Raises:
-            MedocConnectionError: If connection refused
-            MedocTimeoutError: If connection times out
-        """
+        """Establish TCP connection to Medoc device."""
         try:
             self._close_socket_only()
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -151,10 +141,7 @@ class MedocClient:
             ) from None
 
     def disconnect(self) -> None:
-        """Close TCP connection and reset state.
-
-        Safe to call multiple times or when not connected.
-        """
+        """Close TCP connection and reset state."""
         self._close_socket_only()
         self._state = ConnectionState.DISCONNECTED
 
@@ -163,7 +150,7 @@ class MedocClient:
             try:
                 self._sock.close()
             except OSError:
-                pass  # Ignore errors on close
+                pass
             finally:
                 self._sock = None
 
@@ -195,11 +182,6 @@ class MedocClient:
             remaining -= len(chunk)
         return b"".join(chunks)
 
-    def _recv_exact(self, num_bytes: int) -> bytes:
-        if self._sock is None:
-            raise RuntimeError("Socket not connected - call connect() first")
-        return self._recv_exact_from(self._sock, num_bytes)
-
     def _read_framed_response(
         self,
         sock: socket.socket,
@@ -209,7 +191,7 @@ class MedocClient:
         header = self._recv_exact_from(sock, 4)
         if len(header) != 4:
             if allow_incomplete:
-                logger.debug("Incomplete Medoc response header for %s: %s", tag, header.hex())
+                logger.debug("Incomplete Medoc response header for %s: %s bytes", tag, len(header))
                 return header
             raise MedocResponseError(
                 response_code=-1,
@@ -220,7 +202,7 @@ class MedocClient:
         body_length = int.from_bytes(header, "big")
         body = self._recv_exact_from(sock, body_length)
         raw_response = header + body
-        logger.debug("Received Medoc frame %s: %s", tag, raw_response.hex())
+        logger.debug("Received Medoc frame %s: len=%d hex=%s", tag, len(raw_response), raw_response.hex())
         if len(body) != body_length:
             if allow_incomplete:
                 logger.debug(
@@ -237,15 +219,6 @@ class MedocClient:
             )
         return raw_response
 
-    def _send_framed_command(self, cmd_id: int, param_bytes: bytes | None = None, tag: str = "") -> bytes:
-        if self._sock is None:
-            raise RuntimeError("Socket not connected - call connect() first")
-
-        request = self._build_frame(cmd_id, param_bytes)
-        logger.debug("Sending Medoc frame %s: %s", tag or cmd_id, request.hex())
-        self._sock.sendall(request)
-        return self._read_framed_response(self._sock, tag or str(cmd_id))
-
     def _send_framed_command_once(
         self,
         cmd_id: int,
@@ -257,7 +230,6 @@ class MedocClient:
         label = tag or str(cmd_id)
         logger.debug("Sending Medoc frame %s: %s", label, request.hex())
 
-        # The validated MMS script opens a fresh TCP connection per command.
         self._close_socket_only()
         try:
             with socket.create_connection(
@@ -291,16 +263,6 @@ class MedocClient:
                 self._config.medoc_port,
                 f"Medoc command {label} failed: {exc}",
             ) from None
-
-    def _parse_response_code(self, raw_response: bytes) -> int:
-        if len(raw_response) < 13:
-            raise MedocResponseError(
-                response_code=-1,
-                raw_bytes=raw_response,
-                message="Response too short to parse Medoc response code",
-            )
-        body = raw_response[4:]
-        return int.from_bytes(body[7:9], "big")
 
     def _parse_response_code_or_none(self, raw_response: bytes) -> int | None:
         if len(raw_response) < 13:
@@ -406,14 +368,7 @@ class MedocClient:
         logger.warning("Medoc still not READY after STOP; proceeding anyway")
 
     def send_unified_program(self) -> None:
-        """Send the unified program via SELECT_TP + START.
-
-        Uses the same MMS command flow as the validated standalone script,
-        with the current experiment's unified program code (192 / 11000000).
-
-        Raises:
-            MedocResponseError: If SELECT_TP or START fails.
-        """
+        """Send the unified program via SELECT_TP + START."""
         self._stop_to_ready()
 
         if not self._select_unified_program():
@@ -445,19 +400,8 @@ class MedocClient:
     def poll_status(self, tag: str = "GET_STATUS") -> dict[str, Any]:
         """Poll Medoc device for current temperature and state.
 
-        Sends command 0 (GET_STATUS) using the framed binary protocol and
-        parses the response per the MMS specification.
-
-        Returns:
-            Dict with keys:
-                - response_code (int)
-                - temperature_celsius (float)
-                - device_state (int)
-                - test_state (int)
-                - raw_bytes (bytes)
-
-        Raises:
-            MedocResponseError: If the response is too short.
+        Returns dict with keys: timestamp, command_id, response_code,
+        temperature_celsius, device_state, test_state, tms, ttl, raw_bytes.
         """
         raw_response = self._send_framed_command_once(
             self.GET_STATUS,
@@ -483,19 +427,8 @@ class MedocClient:
         return self._parse_status(raw_response)
 
     def _parse_status(self, raw_response: bytes) -> dict[str, Any]:
-        """Parse a GET_STATUS response into a dictionary.
-
-        Frame layout (after the 4-byte big-endian length header):
-          bytes 0-3   : timestamp
-          byte  4     : command_id
-          byte  5     : system_state
-          byte  6     : test_state
-          bytes 7-8   : response code (big-endian)
-          bytes 9-12  : tms (big-endian)
-          bytes 13-14 : temperature as signed little-endian 16-bit int / 100
-          byte  17    : ttl (if present)
-        """
-        if len(raw_response) < 16:  # 4 header + 12 body minimum
+        """Parse a GET_STATUS response into a dictionary."""
+        if len(raw_response) < 16:
             raise MedocResponseError(
                 response_code=-1,
                 raw_bytes=raw_response,
