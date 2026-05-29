@@ -196,7 +196,6 @@ class TestMedocOptionalMode:
 
                 trial_config = TrialConfig(
                     task_type="vowel",
-                    pain_condition="xlow",
                     num_go_segments=1,
                     go_segment_durations=(1.0,),
                 )
@@ -326,7 +325,6 @@ class TestMedocOptionalMode:
 
                 trial_config = TrialConfig(
                     task_type="vowel",
-                    pain_condition="xlow",
                     num_go_segments=1,
                     go_segment_durations=(1.0,),
                 )
