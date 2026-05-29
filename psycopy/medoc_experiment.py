@@ -569,21 +569,27 @@ class MedocExperiment:
             duration: Break duration in seconds (default: 60).
         """
         start_time = time.monotonic()
+        last_displayed_second: int | None = None
         while True:
             elapsed = time.monotonic() - start_time
             remaining = duration - elapsed
             if remaining <= 0:
                 break
 
-            message = (
-                "BREAK\n\nRest your voice.\n\n"
-                f"Next block in: {int(remaining)}s"
-            )
-            self.ui.instruction_text.text = message
-            self.ui.instruction_text.draw()
-            self.ui.help_text.draw()
-            self.ui.win.flip()
-            self.ui.wait(0.5)
+            displayed_second = int(remaining)
+            if displayed_second != last_displayed_second:
+                message = (
+                    "BREAK\n\nRest your voice.\n\n"
+                    f"Next block in: {displayed_second}s"
+                )
+                self.ui.instruction_text.text = message
+                self.ui.instruction_text.draw()
+                self.ui.help_text.draw()
+                self.ui.win.flip()
+                last_displayed_second = displayed_second
+
+            self.ui._check_escape()
+            self.ui.core.wait(0.1)
 
     def _generate_speech_pain_schedule(self) -> list[str]:
         """Generate a randomized pain condition schedule for speech mode.
@@ -716,6 +722,7 @@ class MedocExperiment:
         """
         start_time = time.monotonic()
         next_poll_at = 30.0  # first poll at 30 s into the cycle
+        last_displayed_second: int | None = None
         while True:
             elapsed = time.monotonic() - start_time
             remaining = duration - elapsed
@@ -733,18 +740,20 @@ class MedocExperiment:
                 )
                 next_poll_at += 30.0
 
-            # Show SPEAK screen with countdown
-            minutes = int(remaining) // 60
-            seconds = int(remaining) % 60
-            self.ui.sentence_text.text = (
-                f"SPEAK\n\n{minutes:01d}:{seconds:02d}\n\n{pain_condition.upper()}"
-            )
-            self.ui.sentence_text.pos = (0, 0.05)
-            self.ui.sentence_text.height = 0.08
-            self.ui.sentence_text.draw()
-            self.ui.help_text.text = "Press Q + 12345 to stop"
-            self.ui.help_text.draw()
-            self.ui.win.flip()
+            displayed_second = int(remaining)
+            if displayed_second != last_displayed_second:
+                minutes = displayed_second // 60
+                seconds = displayed_second % 60
+                self.ui.sentence_text.text = (
+                    f"SPEAK\n\n{minutes:01d}:{seconds:02d}\n\n{pain_condition.upper()}"
+                )
+                self.ui.sentence_text.pos = (0, 0.05)
+                self.ui.sentence_text.height = 0.08
+                self.ui.sentence_text.draw()
+                self.ui.help_text.text = "Press Q + 12345 to stop"
+                self.ui.help_text.draw()
+                self.ui.win.flip()
+                last_displayed_second = displayed_second
 
             # Check for graceful shutdown (Q + 12345)
             self.ui._check_escape()
@@ -791,9 +800,7 @@ class MedocExperiment:
             # ------------------------------------------------------------------
             if self.config.mode == ExperimentMode.SPEECH:
                 self.logger.info("Running in SPEECH mode")
-                self.ui.show_instructions(
-                    go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
-                )
+                self.ui.show_speech_instructions(medoc_enabled=self.medoc_client is not None)
 
                 # Start continuous audio recording for the whole speech session
                 speech_audio_path = (
@@ -813,12 +820,14 @@ class MedocExperiment:
                     pain = self.speech_pain_schedule[
                         cycle_idx % len(self.speech_pain_schedule)
                     ]
+                    speech_client: MedocClient | None = None
 
                     # Connect Medoc at the start of each 7-minute cycle
                     if self.medoc_client is not None:
-                        self.medoc_client.connect()
                         try:
+                            self.medoc_client.connect()
                             self.medoc_client.send_unified_program()
+                            speech_client = self.medoc_client
                             self.logger.info(
                                 "Medoc unified program 11000000 started for speech cycle %d",
                                 cycle_idx,
@@ -834,7 +843,7 @@ class MedocExperiment:
                         self._run_speech_pain_cycle(
                             pain,
                             cycle_idx,
-                            self.medoc_client,
+                            speech_client,
                         )
                     except UserAbort:
                         self.logger.info(
@@ -843,9 +852,14 @@ class MedocExperiment:
                         break
                     finally:
                         # Disconnect Medoc before the 1-minute break
-                        if self.medoc_client is not None:
+                        if speech_client is not None:
                             try:
-                                self.medoc_client.stop_unified_program()
+                                speech_client.stop_unified_program()
+                                speech_client.disconnect()
+                            except Exception as exc:
+                                self.logger.warning("Error disconnecting Medoc: %s", exc)
+                        elif self.medoc_client is not None:
+                            try:
                                 self.medoc_client.disconnect()
                             except Exception as exc:
                                 self.logger.warning("Error disconnecting Medoc: %s", exc)
@@ -885,9 +899,10 @@ class MedocExperiment:
             for block_num, block_trials in enumerate(self.trials):
                 vowel_client: MedocClient | None = None
                 if self.medoc_client is not None:
-                    self.medoc_client.connect()
                     try:
+                        self.medoc_client.connect()
                         self.medoc_client.send_unified_program()
+                        vowel_client = self.medoc_client
                         self.logger.info(
                             "Medoc unified program 11000000 started for block %d",
                             block_num,
@@ -898,7 +913,6 @@ class MedocExperiment:
                             block_num,
                             exc,
                         )
-                    vowel_client = self.medoc_client
 
                 self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
                 self.run_set(block_num, block_trials, client=vowel_client)

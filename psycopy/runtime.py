@@ -298,6 +298,25 @@ class PsychoPyUI:
         self.win.flip()
         self.wait_for_space()
 
+    def show_speech_instructions(self, medoc_enabled: bool = False) -> None:
+        """Show free speech interview instructions."""
+        instructions = (
+            "SPEECH INTERVIEW\n\n"
+            "Speak naturally with the researcher while SPEAK is shown on screen.\n\n"
+        )
+        if medoc_enabled:
+            instructions += (
+                "Thermal stimulation will be applied during the interview.\n"
+                "You may experience changes in pain/discomfort levels.\n\n"
+            )
+        instructions += "The researcher will stop the interview when finished.\n\nPress SPACE to begin."
+
+        self.instruction_text.text = instructions
+        self.instruction_text.draw()
+        self.help_text.draw()
+        self.win.flip()
+        self.wait_for_space()
+
     def show_pain_warning(self) -> None:
         self.pain_warning.draw()
         self.win.flip()
@@ -400,8 +419,8 @@ class PsychoPyUI:
         ESC does not stop the experiment — only the coded shutdown works.
         """
         self.event.clearEvents(eventType="keyboard")
+        self.show_speech_screen()
         while True:
-            self.show_speech_screen()
             # Check for Q to start shutdown code entry
             keys = self.event.getKeys(keyList=["q"])
             if keys and self._confirm_shutdown_code():

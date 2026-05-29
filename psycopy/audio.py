@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import queue
 import threading
 import time
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +25,10 @@ class AudioService:
         self.sample_rate = sample_rate
         self.retries = retries
         self._stream: sd.InputStream | None = None
-        self._frames: list[np.ndarray] = []
+        self._audio_queue: queue.Queue[np.ndarray | None] | None = None
+        self._writer_thread: threading.Thread | None = None
+        self._wave_file: Any = None
+        self._dropped_audio_chunks = 0
         self._lock = threading.Lock()
         self.is_recording = False
         self.filename: str | None = None
@@ -44,36 +49,99 @@ class AudioService:
     def _audio_callback(self, indata, frames, callback_time, status) -> None:
         if status:
             self.logger.warning("Audio callback status: %s", status)
-        with self._lock:
-            self._frames.append(indata.copy())
+        frame = indata.copy()
+
+        audio_queue = self._audio_queue
+        if audio_queue is not None:
+            try:
+                audio_queue.put_nowait(frame)
+            except queue.Full:
+                self._dropped_audio_chunks += 1
 
         # VAD processing (parallel to normal recording)
         if self._vad_enabled and self._vad is not None:
             # Calculate timestamp relative to recording start
             timestamp = time.monotonic() - self._monotonic_start
-            self._vad.process_audio_chunk(indata.copy(), timestamp)
+            self._vad.process_audio_chunk(frame, timestamp)
+
+    def _start_writer(self, filename: Path) -> None:
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        self._audio_queue = queue.Queue(maxsize=256)
+        self._wave_file = wave.open(str(filename), "wb")
+        self._wave_file.setnchannels(1)
+        self._wave_file.setsampwidth(2)
+        self._wave_file.setframerate(self.sample_rate)
+        self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
+        self._writer_thread.start()
+
+    def _writer_loop(self) -> None:
+        audio_queue = self._audio_queue
+        wave_file = self._wave_file
+        if audio_queue is None or wave_file is None:
+            return
+
+        while True:
+            chunk = audio_queue.get()
+            try:
+                if chunk is None:
+                    return
+                pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
+                wave_file.writeframes(pcm)
+            finally:
+                audio_queue.task_done()
+
+    def _finish_writer(self) -> None:
+        audio_queue = self._audio_queue
+        writer_thread = self._writer_thread
+
+        if audio_queue is not None:
+            try:
+                audio_queue.put(None, timeout=2.0)
+            except queue.Full:
+                self.logger.warning("Audio writer queue full during shutdown")
+        if writer_thread is not None:
+            writer_thread.join(timeout=10.0)
+            if writer_thread.is_alive():
+                self.logger.warning("Audio writer did not finish before timeout")
+
+        if self._wave_file is not None:
+            try:
+                self._wave_file.close()
+            except Exception as exc:  # pragma: no cover - best effort cleanup
+                self.logger.warning("Error closing audio file: %s", exc)
+
+        self._audio_queue = None
+        self._writer_thread = None
+        self._wave_file = None
 
     def start(self, filename: Path) -> None:
         self.filename = str(filename)
-        self._frames = []
+        self._dropped_audio_chunks = 0
         last_error: Exception | None = None
         for attempt in range(1, self.retries + 2):
             try:
+                self._start_writer(filename)
                 self._stream = sd.InputStream(
                     samplerate=self.sample_rate,
                     channels=1,
                     dtype="float32",
                     callback=self._audio_callback,
                 )
+                self._monotonic_start = time.monotonic()
                 self._stream.start()
                 self.is_recording = True
-                # Record monotonic start time for VAD timing alignment
-                self._monotonic_start = time.monotonic()
                 self.logger.info("Audio recording started: %s", self.filename)
                 return
             except Exception as exc:  # pragma: no cover - hardware dependent
                 last_error = exc
                 self.logger.warning("Audio start attempt %s failed: %s", attempt, exc)
+                if self._stream is not None:
+                    try:
+                        self._stream.close()
+                    except Exception:
+                        pass
+                    self._stream = None
+                self._finish_writer()
                 time.sleep(0.1)
         raise AudioServiceError(f"Unable to start audio recording: {last_error}")
 
@@ -87,14 +155,10 @@ class AudioService:
         except Exception as exc:  # pragma: no cover - hardware dependent
             self.logger.warning("Error stopping audio stream: %s", exc)
 
-        with self._lock:
-            if self._frames:
-                audio_data = np.concatenate(self._frames, axis=0)
-                audio_int16 = (audio_data * 32767).astype(np.int16)
-                from scipy.io import wavfile
-
-                wavfile.write(self.filename, self.sample_rate, audio_int16)
+        self._finish_writer()
         self.is_recording = False
+        if self._dropped_audio_chunks:
+            self.logger.warning("Dropped %d audio chunks while recording", self._dropped_audio_chunks)
         self.logger.info("Audio recording stopped: %s", self.filename)
 
     def abort(self) -> None:
@@ -106,8 +170,8 @@ class AudioService:
                 self.logger.warning("Audio cleanup failed during abort: %s", exc)
             self._stream = None
         with self._lock:
-            self._frames = []
             self.is_recording = False
+        self._finish_writer()
 
     # ==========================================================================
     # VAD Methods
