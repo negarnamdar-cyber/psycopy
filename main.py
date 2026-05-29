@@ -1,8 +1,18 @@
 #!/usr/bin/env python3
 """Entry point for the Speech Gating Experiment with Medoc thermal stimulation."""
 
+import shutil
 import sys
 from pathlib import Path
+
+# Nuke stale Python cache before any imports so __pycache__ doesn't shadow edits.
+_project_root = Path(__file__).parent.resolve()
+for pycache in _project_root.rglob("__pycache__"):
+    if pycache.is_dir():
+        shutil.rmtree(pycache, ignore_errors=True)
+for pyc in _project_root.rglob("*.pyc"):
+    if pyc.is_file():
+        pyc.unlink(missing_ok=True)
 
 if __name__ == "__main__":
     package_dir = Path(__file__).parent / "psycopy"

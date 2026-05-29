@@ -763,14 +763,14 @@ class MedocExperiment:
 
                 cycle_idx = 0
                 while True:
-                    speech_client: MedocClient | None = None
+                    # Always pass the client for polling even if START fails
+                    speech_client = self.medoc_client
 
-                    # Connect Medoc at the start of each 7-minute cycle
-                    if self.medoc_client is not None:
+                    # Try to start the unified program, but keep polling regardless
+                    if speech_client is not None:
                         try:
-                            self.medoc_client.connect()
-                            self.medoc_client.send_unified_program()
-                            speech_client = self.medoc_client
+                            speech_client.connect()
+                            speech_client.send_unified_program()
                             self.logger.info(
                                 "Medoc unified program 11000000 started for speech cycle %d",
                                 cycle_idx,
@@ -798,11 +798,6 @@ class MedocExperiment:
                             try:
                                 speech_client.stop_unified_program()
                                 speech_client.disconnect()
-                            except Exception as exc:
-                                self.logger.warning("Error disconnecting Medoc: %s", exc)
-                        elif self.medoc_client is not None:
-                            try:
-                                self.medoc_client.disconnect()
                             except Exception as exc:
                                 self.logger.warning("Error disconnecting Medoc: %s", exc)
 
@@ -839,12 +834,12 @@ class MedocExperiment:
             )
 
             for block_num, block_trials in enumerate(self.trials):
-                vowel_client: MedocClient | None = None
-                if self.medoc_client is not None:
+                # Always pass client for polling even if START fails
+                vowel_client = self.medoc_client
+                if vowel_client is not None:
                     try:
-                        self.medoc_client.connect()
-                        self.medoc_client.send_unified_program()
-                        vowel_client = self.medoc_client
+                        vowel_client.connect()
+                        vowel_client.send_unified_program()
                         self.logger.info(
                             "Medoc unified program 11000000 started for block %d",
                             block_num,
