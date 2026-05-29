@@ -845,6 +845,7 @@ class MedocExperiment:
                         # Disconnect Medoc before the 1-minute break
                         if self.medoc_client is not None:
                             try:
+                                self.medoc_client.stop_unified_program()
                                 self.medoc_client.disconnect()
                             except Exception as exc:
                                 self.logger.warning("Error disconnecting Medoc: %s", exc)
@@ -905,6 +906,7 @@ class MedocExperiment:
                 # Disconnect Medoc before the break so the pain cycle stops
                 if vowel_client is not None:
                     try:
+                        vowel_client.stop_unified_program()
                         vowel_client.disconnect()
                         self.logger.info("Medoc disconnected before break")
                     except Exception as exc:

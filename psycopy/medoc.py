@@ -76,14 +76,18 @@ class MedocClient:
     """TCP socket client for Medoc thermode device communication.
 
     Manages the unified Medoc thermal program:
-    - Connect -> SELECT_TP unified -> START -> poll status -> disconnect
+    - Reachability check -> STOP/ready -> SELECT_TP unified -> START
+    - Each MMS command uses its own short TCP connection, matching Medoc MMS behavior.
     """
 
-    UNIFIED_PROGRAM_CODE = 192
+    UNIFIED_PROGRAM_CODE = 192  # Binary 11000000
+    UNIFIED_PROGRAM_LABEL = "unified"
     GET_STATUS = 0       # temperature / device-state poll
     SELECT_TP = 1
     START = 2
+    STOP = 5
     INTER_CMD_DELAY_SEC = 0.5
+    COMMAND_RESPONSE_TIMEOUT_SEC = 2.0
 
     def __init__(self, config: MedocConfig) -> None:
         self._config = config
@@ -102,10 +106,12 @@ class MedocClient:
             MedocTimeoutError: If connection times out
         """
         try:
-            self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._sock.settimeout(self._config.medoc_timeout)
-            self._sock.connect((self._config.medoc_ip, self._config.medoc_port))
+            self._close_socket_only()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.settimeout(self._config.medoc_timeout)
+            sock.connect((self._config.medoc_ip, self._config.medoc_port))
+            sock.close()
             self._state = ConnectionState.CONNECTED
 
         except socket.timeout:
@@ -149,6 +155,10 @@ class MedocClient:
 
         Safe to call multiple times or when not connected.
         """
+        self._close_socket_only()
+        self._state = ConnectionState.DISCONNECTED
+
+    def _close_socket_only(self) -> None:
         if self._sock is not None:
             try:
                 self._sock.close()
@@ -156,7 +166,6 @@ class MedocClient:
                 pass  # Ignore errors on close
             finally:
                 self._sock = None
-        self._state = ConnectionState.DISCONNECTED
 
     def __enter__(self) -> MedocClient:
         self.connect()
@@ -169,25 +178,64 @@ class MedocClient:
         return (value & 0xFFFFFFFF).to_bytes(4, "big", signed=False)
 
     def _build_frame(self, cmd_id: int, param_bytes: bytes | None = None) -> bytes:
-        timestamp_be = self._u32be(int(time.time()))
+        timestamp_be = self._u32be(socket.htonl(int(time.time())))
         body = timestamp_be + cmd_id.to_bytes(1, "big")
         if param_bytes is not None:
             body += param_bytes
         return self._u32be(len(body)) + body
 
-    def _recv_exact(self, num_bytes: int) -> bytes:
-        if self._sock is None:
-            raise RuntimeError("Socket not connected - call connect() first")
-
+    def _recv_exact_from(self, sock: socket.socket, num_bytes: int) -> bytes:
         chunks: list[bytes] = []
         remaining = num_bytes
         while remaining > 0:
-            chunk = self._sock.recv(remaining)
+            chunk = sock.recv(remaining)
             if not chunk:
                 break
             chunks.append(chunk)
             remaining -= len(chunk)
         return b"".join(chunks)
+
+    def _recv_exact(self, num_bytes: int) -> bytes:
+        if self._sock is None:
+            raise RuntimeError("Socket not connected - call connect() first")
+        return self._recv_exact_from(self._sock, num_bytes)
+
+    def _read_framed_response(
+        self,
+        sock: socket.socket,
+        tag: str,
+        allow_incomplete: bool = False,
+    ) -> bytes:
+        header = self._recv_exact_from(sock, 4)
+        if len(header) != 4:
+            if allow_incomplete:
+                logger.debug("Incomplete Medoc response header for %s: %s", tag, header.hex())
+                return header
+            raise MedocResponseError(
+                response_code=-1,
+                raw_bytes=header,
+                message=f"Incomplete response header for {tag}",
+            )
+
+        body_length = int.from_bytes(header, "big")
+        body = self._recv_exact_from(sock, body_length)
+        raw_response = header + body
+        logger.debug("Received Medoc frame %s: %s", tag, raw_response.hex())
+        if len(body) != body_length:
+            if allow_incomplete:
+                logger.debug(
+                    "Incomplete Medoc response body for %s: expected=%d actual=%d",
+                    tag,
+                    body_length,
+                    len(body),
+                )
+                return raw_response
+            raise MedocResponseError(
+                response_code=-1,
+                raw_bytes=raw_response,
+                message=f"Incomplete response body for {tag}",
+            )
+        return raw_response
 
     def _send_framed_command(self, cmd_id: int, param_bytes: bytes | None = None, tag: str = "") -> bytes:
         if self._sock is None:
@@ -196,26 +244,53 @@ class MedocClient:
         request = self._build_frame(cmd_id, param_bytes)
         logger.debug("Sending Medoc frame %s: %s", tag or cmd_id, request.hex())
         self._sock.sendall(request)
+        return self._read_framed_response(self._sock, tag or str(cmd_id))
 
-        header = self._recv_exact(4)
-        if len(header) != 4:
-            raise MedocResponseError(
-                response_code=-1,
-                raw_bytes=header,
-                message=f"Incomplete response header for {tag or cmd_id}",
-            )
+    def _send_framed_command_once(
+        self,
+        cmd_id: int,
+        param_bytes: bytes | None = None,
+        tag: str = "",
+        allow_incomplete: bool = False,
+    ) -> bytes:
+        request = self._build_frame(cmd_id, param_bytes)
+        label = tag or str(cmd_id)
+        logger.debug("Sending Medoc frame %s: %s", label, request.hex())
 
-        body_length = int.from_bytes(header, "big")
-        body = self._recv_exact(body_length)
-        raw_response = header + body
-        logger.debug("Received Medoc frame %s: %s", tag or cmd_id, raw_response.hex())
-        if len(body) != body_length:
-            raise MedocResponseError(
-                response_code=-1,
-                raw_bytes=raw_response,
-                message=f"Incomplete response body for {tag or cmd_id}",
-            )
-        return raw_response
+        # The validated MMS script opens a fresh TCP connection per command.
+        self._close_socket_only()
+        try:
+            with socket.create_connection(
+                (self._config.medoc_ip, self._config.medoc_port),
+                timeout=self._config.medoc_timeout,
+            ) as sock:
+                sock.settimeout(min(self._config.medoc_timeout, self.COMMAND_RESPONSE_TIMEOUT_SEC))
+                sock.sendall(request)
+                return self._read_framed_response(sock, label, allow_incomplete=allow_incomplete)
+        except socket.timeout:
+            if allow_incomplete:
+                logger.debug("Timed out waiting for Medoc response to %s", label)
+                return b""
+            raise MedocTimeoutError(
+                self._config.medoc_timeout,
+                f"Timeout waiting for Medoc framed response from {self._config.medoc_ip}:{self._config.medoc_port}",
+            ) from None
+        except ConnectionRefusedError:
+            self._state = ConnectionState.ERROR
+            raise MedocConnectionError(
+                self._config.medoc_ip,
+                self._config.medoc_port,
+            ) from None
+        except OSError as exc:
+            if allow_incomplete and self._is_incomplete_socket_error(exc):
+                logger.debug("Medoc closed connection while waiting for %s: %s", label, exc)
+                return b""
+            self._state = ConnectionState.ERROR
+            raise MedocConnectionError(
+                self._config.medoc_ip,
+                self._config.medoc_port,
+                f"Medoc command {label} failed: {exc}",
+            ) from None
 
     def _parse_response_code(self, raw_response: bytes) -> int:
         if len(raw_response) < 13:
@@ -227,64 +302,143 @@ class MedocClient:
         body = raw_response[4:]
         return int.from_bytes(body[7:9], "big")
 
+    def _parse_response_code_or_none(self, raw_response: bytes) -> int | None:
+        if len(raw_response) < 13:
+            return None
+        body = raw_response[4:]
+        return int.from_bytes(body[7:9], "big")
+
+    def _is_incomplete_socket_error(self, exc: OSError) -> bool:
+        message = str(exc).lower()
+        return any(
+            pattern in message
+            for pattern in (
+                "established connection was aborted",
+                "forcibly closed by the remote host",
+                "connection reset by peer",
+                "broken pipe",
+            )
+        )
+
+    def _select_unified_program(self) -> bool:
+        param_a = self._u32be(socket.htonl(self.UNIFIED_PROGRAM_CODE))
+        raw = self._send_framed_command_once(
+            self.SELECT_TP,
+            param_bytes=param_a,
+            tag=f"SELECT_TP {self.UNIFIED_PROGRAM_LABEL} (A)",
+            allow_incomplete=True,
+        )
+        rc = self._parse_response_code_or_none(raw)
+        if rc == MedocResponseCode.OK:
+            logger.info("SELECT_TP %s OK (A)", self.UNIFIED_PROGRAM_LABEL)
+            return True
+
+        time.sleep(self.INTER_CMD_DELAY_SEC)
+
+        param_b = self._u32be(self.UNIFIED_PROGRAM_CODE)
+        raw = self._send_framed_command_once(
+            self.SELECT_TP,
+            param_bytes=param_b,
+            tag=f"SELECT_TP {self.UNIFIED_PROGRAM_LABEL} (B)",
+            allow_incomplete=True,
+        )
+        rc = self._parse_response_code_or_none(raw)
+        if rc == MedocResponseCode.OK:
+            logger.info("SELECT_TP %s OK (B)", self.UNIFIED_PROGRAM_LABEL)
+            return True
+
+        logger.warning("SELECT_TP %s failed; last response code=%s", self.UNIFIED_PROGRAM_LABEL, rc)
+        return False
+
+    def _start_selected_program(self) -> bool:
+        raw = self._send_framed_command_once(
+            self.START,
+            tag=f"START {self.UNIFIED_PROGRAM_LABEL}",
+            allow_incomplete=True,
+        )
+        rc = self._parse_response_code_or_none(raw)
+        if rc not in (None, MedocResponseCode.OK):
+            logger.warning("START %s response code=%s", self.UNIFIED_PROGRAM_LABEL, rc)
+
+        time.sleep(0.2)
+        try:
+            status = self.poll_status(tag=f"VERIFY_START({self.UNIFIED_PROGRAM_LABEL})")
+        except Exception as exc:
+            logger.warning("Could not verify unified program status: %s", exc)
+            return False
+
+        if status.get("test_state") == 1:
+            logger.info("Unified program verified running (test_state=1)")
+            return True
+
+        logger.warning(
+            "Unified program test_state=%s after START",
+            status.get("test_state"),
+        )
+        return False
+
+    def _stop_to_ready(self) -> None:
+        try:
+            self._send_framed_command_once(
+                self.STOP,
+                tag=f"STOP {self.UNIFIED_PROGRAM_LABEL}",
+                allow_incomplete=True,
+            )
+        except Exception as exc:
+            logger.debug("STOP before unified start did not complete: %s", exc)
+
+        deadline = time.time() + 10.0
+        while time.time() < deadline:
+            time.sleep(0.2)
+            try:
+                status = self.poll_status(tag=f"WAIT_READY({self.UNIFIED_PROGRAM_LABEL})")
+            except Exception as exc:
+                logger.debug("WAIT_READY poll failed: %s", exc)
+                continue
+
+            if status.get("test_state") in (0, 3) and status.get("device_state") in (0, 1):
+                return
+
+        logger.warning("Medoc still not READY after STOP; proceeding anyway")
+
     def send_unified_program(self) -> None:
         """Send the unified program via SELECT_TP + START.
 
-        Keeps the socket open so the caller can continue polling status.
-        Must be called while the socket is already connected.
+        Uses the same MMS command flow as the validated standalone script,
+        with the current experiment's unified program code (192 / 11000000).
 
         Raises:
             MedocResponseError: If SELECT_TP or START fails.
-            RuntimeError: If socket is not connected.
         """
-        try:
-            select_response = self._send_framed_command(
-                self.SELECT_TP,
-                param_bytes=self._u32be(self.UNIFIED_PROGRAM_CODE),
-                tag="SELECT_TP unified",
-            )
-            select_rc = self._parse_response_code(select_response)
-            if select_rc != MedocResponseCode.OK:
-                raise MedocResponseError(
-                    response_code=select_rc,
-                    raw_bytes=select_response,
-                    message=f"SELECT_TP failed for unified with code {select_rc}",
-                )
+        self._stop_to_ready()
 
-            time.sleep(self.INTER_CMD_DELAY_SEC)
-
-            start_response = self._send_framed_command(
-                self.START,
-                tag="START unified",
-            )
-            start_rc = self._parse_response_code(start_response)
-            if start_rc != MedocResponseCode.OK:
-                raise MedocResponseError(
-                    response_code=start_rc,
-                    raw_bytes=start_response,
-                    message=f"START failed for unified with code {start_rc}",
-                )
-
-            time.sleep(0.2)
+        if not self._select_unified_program():
             try:
-                verify = self.poll_status()
-                if verify.get("test_state") == 1:
-                    logger.info("Unified program verified running (test_state=1)")
-                else:
-                    logger.warning(
-                        "Unified program test_state=%s after START",
-                        verify.get("test_state"),
-                    )
+                self.poll_status(tag="GET_STATUS(after-select-fail)")
             except Exception as exc:
-                logger.warning("Could not verify unified program status: %s", exc)
+                logger.warning("Could not poll status after SELECT_TP failure: %s", exc)
+            raise MedocResponseError(
+                response_code=-1,
+                raw_bytes=None,
+                message=f"SELECT_TP failed for {self.UNIFIED_PROGRAM_LABEL}",
+            )
 
-        except socket.timeout:
-            raise MedocTimeoutError(
-                self._config.medoc_timeout,
-                "Timeout waiting for Medoc framed response during unified program start",
-            ) from None
+        time.sleep(self.INTER_CMD_DELAY_SEC)
 
-    def poll_status(self) -> dict[str, Any]:
+        if not self._start_selected_program():
+            self._stop_to_ready()
+            if not self._start_selected_program():
+                raise MedocResponseError(
+                    response_code=-1,
+                    raw_bytes=None,
+                    message=f"START failed for {self.UNIFIED_PROGRAM_LABEL}",
+                )
+
+    def stop_unified_program(self) -> None:
+        """Stop the current Medoc program and wait briefly for READY/IDLE."""
+        self._stop_to_ready()
+
+    def poll_status(self, tag: str = "GET_STATUS") -> dict[str, Any]:
         """Poll Medoc device for current temperature and state.
 
         Sends command 0 (GET_STATUS) using the framed binary protocol and
@@ -300,11 +454,10 @@ class MedocClient:
 
         Raises:
             MedocResponseError: If the response is too short.
-            RuntimeError: If socket is not connected.
         """
-        raw_response = self._send_framed_command(
+        raw_response = self._send_framed_command_once(
             self.GET_STATUS,
-            tag="GET_STATUS",
+            tag=tag,
         )
         return self._parse_status(raw_response)
 
