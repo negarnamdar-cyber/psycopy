@@ -37,7 +37,6 @@ from psycopy.session import (
     EventLogger,
     MedocLogger,
     MedocTrialLogger,
-    VADLogger,
     create_output_directory,
     save_config_snapshot,
 )
@@ -77,13 +76,10 @@ class MedocExperiment:
 
         self.event_logger = EventLogger(self.session_paths.events_file)
         self.trial_logger = MedocTrialLogger(self.session_paths.trials_file)
-        self.vad_logger = VADLogger(self.session_paths.vad_file)
         self.medoc_logger = MedocLogger(self.session_paths.medoc_file)
 
         self.audio = AudioService(sample_rate=config.sample_rate, retries=2)
         self.audio.preflight()
-        if config.vad_enabled:
-            self.audio.enable_vad(config)
 
         if config.medoc_config is None:
             logger.info("Medoc disabled - running in testing mode.")
@@ -172,7 +168,6 @@ class MedocExperiment:
         device_state: int | None = None
         test_state: int | None = None
         response_code: int | None = None
-        vad_started = False
         audio_started = False
 
         try:
@@ -202,15 +197,11 @@ class MedocExperiment:
             audio_started = True
             self.currently_recording = True
 
-            if self.config.vad_enabled:
-                self.audio.start_vad_monitoring()
-                self.vad_logger.set_context(trial_instance_id, f"block{set_num}", set_num)
-                vad_started = True
-
             self.event_logger.log(
                 event_type="recording_start",
                 trial_instance_id=trial_instance_id,
                 block=f"block{set_num}",
+                event_data={"audio_type": "vowel"},
             )
 
             total_go_time = sum(trial_config.go_segment_durations)
@@ -219,6 +210,18 @@ class MedocExperiment:
 
             next_poll_at = 30.0
             for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
+                # Log STOP cue for offline VAD latency computation
+                stop_cue_ts = time.monotonic()
+                self.event_logger.log(
+                    event_type="stop_cue",
+                    trial_instance_id=trial_instance_id,
+                    block=f"block{set_num}",
+                    event_data={
+                        "segment_index": seg_idx,
+                        "cue_duration_sec": round(stop_duration, 3),
+                        "trial_elapsed_sec": round(stop_cue_ts - trigger_timestamp, 3),
+                    },
+                )
                 self._display_state(TaskState.STOP, VOWEL_TEXT)
                 self.ui.wait(stop_duration)
 
@@ -239,6 +242,18 @@ class MedocExperiment:
                         response_code = status.get("response_code")
                     next_poll_at += 30.0
 
+                # Log GO cue for offline analysis
+                go_cue_ts = time.monotonic()
+                self.event_logger.log(
+                    event_type="go_cue",
+                    trial_instance_id=trial_instance_id,
+                    block=f"block{set_num}",
+                    event_data={
+                        "segment_index": seg_idx,
+                        "cue_duration_sec": round(go_duration, 3),
+                        "trial_elapsed_sec": round(go_cue_ts - trigger_timestamp, 3),
+                    },
+                )
                 self._display_state(TaskState.GO, VOWEL_TEXT)
                 self.ui.wait(go_duration)
 
@@ -250,6 +265,18 @@ class MedocExperiment:
                     go_duration,
                 )
 
+            # Final STOP cue
+            final_stop_ts = time.monotonic()
+            self.event_logger.log(
+                event_type="stop_cue",
+                trial_instance_id=trial_instance_id,
+                block=f"block{set_num}",
+                event_data={
+                    "segment_index": trial_config.num_go_segments,
+                    "cue_duration_sec": round(stop_duration, 3),
+                    "trial_elapsed_sec": round(final_stop_ts - trigger_timestamp, 3),
+                },
+            )
             self._display_state(TaskState.STOP, VOWEL_TEXT)
 
             elapsed = time.monotonic() - trigger_timestamp
@@ -285,21 +312,6 @@ class MedocExperiment:
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
 
-            if vad_started and self.config.vad_enabled:
-                try:
-                    vad_events = self.audio.stop_vad_monitoring()
-                    for event in vad_events:
-                        self.vad_logger.log_event(
-                            event_type=event["type"],
-                            timestamp=event["timestamp"],
-                            is_speech=event.get("is_speech"),
-                        )
-                    self.vad_logger.save()
-                    self.vad_logger.reset()
-                    vad_started = False
-                except Exception as exc:
-                    self.logger.warning("Error stopping VAD: %s", exc)
-
         except UserAbort:
             self.logger.info("Trial %d.%d interrupted by graceful shutdown", set_num, trial_num)
             raise
@@ -318,20 +330,6 @@ class MedocExperiment:
                     )
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
-
-            if vad_started and self.config.vad_enabled:
-                try:
-                    vad_events = self.audio.stop_vad_monitoring()
-                    for event in vad_events:
-                        self.vad_logger.log_event(
-                            event_type=event["type"],
-                            timestamp=event["timestamp"],
-                            is_speech=event.get("is_speech"),
-                        )
-                    self.vad_logger.save()
-                    self.vad_logger.reset()
-                except Exception as exc:
-                    self.logger.warning("Error stopping VAD: %s", exc)
 
         trial_end_timestamp = time.monotonic()
         actual_duration = trial_end_timestamp - trigger_timestamp
@@ -549,7 +547,6 @@ class MedocExperiment:
 
     def save_all_loggers(self) -> None:
         self.trial_logger.save()
-        self.vad_logger.save()
         self.medoc_logger.save()
         self.event_logger.save()
         self.logger.info("All loggers saved to disk")
@@ -581,6 +578,7 @@ class MedocExperiment:
                     event_type="recording_start",
                     trial_instance_id="",
                     block="speech",
+                    event_data={"audio_type": "speech"},
                 )
 
                 cycle_idx = 0

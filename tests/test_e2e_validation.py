@@ -60,12 +60,9 @@ class MockPsychoPyClock:
 class MockAudioService:
     """Mock AudioService that avoids importing sounddevice."""
 
-    def __init__(self, vad_events: list[dict] = None):
+    def __init__(self):
         self._recording = False
         self._recording_path = None
-        self._vad_events = vad_events or []
-        self._vad_enabled = False
-        self._stop_cue_time = None
         self._preflight_called = False
 
     def preflight(self):
@@ -80,22 +77,6 @@ class MockAudioService:
 
     def abort(self):
         self._recording = False
-
-    def enable_vad(self, config):
-        self._vad_enabled = config.vad_enabled
-
-    def start_vad_monitoring(self):
-        pass
-
-    def stop_vad_monitoring(self):
-        return self._vad_events.copy()
-
-    def set_stop_cue_time(self):
-        self._stop_cue_time = 0.5
-        return 0.5
-
-    def get_speech_cessation_latency(self):
-        return None
 
     @property
     def is_recording(self):

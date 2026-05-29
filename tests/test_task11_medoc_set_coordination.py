@@ -82,15 +82,9 @@ def mock_ui():
 def mock_audio():
     """Create mock AudioService."""
     audio = MagicMock()
-    audio.vad_enabled = True
     audio.start = MagicMock()
     audio.stop = MagicMock()
-    audio.start_vad_monitoring = MagicMock()
-    audio.stop_vad_monitoring = MagicMock(return_value=[])
-    audio.set_stop_cue_time = MagicMock(return_value=0.5)
-    audio.get_speech_cessation_latency = MagicMock(return_value=None)
     audio.preflight = MagicMock()
-    audio.enable_vad = MagicMock()
     return audio
 
 

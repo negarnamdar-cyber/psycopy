@@ -32,13 +32,8 @@ class AudioService:
         self._lock = threading.Lock()
         self.is_recording = False
         self.filename: str | None = None
-        self.logger = logging.getLogger("psycopy.audio")
-
-        # VAD-related attributes
-        self._vad: Any = None  # VADService if available
-        self._vad_enabled: bool = False
         self._monotonic_start: float = 0.0
-        self._vad_config: Any = None  # Store config reference for frame duration etc.
+        self.logger = logging.getLogger("psycopy.audio")
 
     def preflight(self) -> None:
         devices = sd.query_devices()
@@ -57,12 +52,6 @@ class AudioService:
                 audio_queue.put_nowait(frame)
             except queue.Full:
                 self._dropped_audio_chunks += 1
-
-        # VAD processing (parallel to normal recording)
-        if self._vad_enabled and self._vad is not None:
-            # Calculate timestamp relative to recording start
-            timestamp = time.monotonic() - self._monotonic_start
-            self._vad.process_audio_chunk(frame, timestamp)
 
     def _start_writer(self, filename: Path) -> None:
         filename.parent.mkdir(parents=True, exist_ok=True)
@@ -172,131 +161,3 @@ class AudioService:
         with self._lock:
             self.is_recording = False
         self._finish_writer()
-
-    # ==========================================================================
-    # VAD Methods
-    # ==========================================================================
-
-    def enable_vad(self, config) -> None:
-        """Initialize VADService if vad_enabled in config.
-
-        Args:
-            config: ExperimentConfig with VAD settings.
-        """
-        if not getattr(config, "vad_enabled", False):
-            self._vad_enabled = False
-            self._vad = None
-            return
-
-        try:
-            # Import VADService (pattern from features.py for optional dependency)
-            from psycopy.vad import VADService
-        except ImportError:
-            self._vad_enabled = False
-            self._vad = None
-            self.logger.warning(
-                "VAD requested but webrtcvad package not installed. "
-                "Install with: pip install webrtcvad"
-            )
-            return
-
-        try:
-            vad_instance = VADService(
-                aggressiveness=getattr(config, "vad_aggressiveness", 2),
-                frame_duration_ms=getattr(config, "vad_frame_duration_ms", 30),
-                silence_frames=getattr(config, "vad_silence_frames", 10),
-                source_rate=self.sample_rate,
-            )
-            self._vad = vad_instance
-            self._vad_enabled = True
-            self._vad_config = config
-            self.logger.info(
-                "VAD enabled: aggressiveness=%d, frame_duration=%dms, silence_frames=%d",
-                vad_instance.aggressiveness,
-                vad_instance.frame_duration_ms,
-                vad_instance.silence_frames,
-            )
-        except Exception as exc:
-            self._vad_enabled = False
-            self._vad = None
-            self.logger.error("Failed to initialize VAD: %s", exc)
-
-    def start_vad_monitoring(self) -> None:
-        """Start tracking speech for a new trial.
-
-        Resets VAD state and prepares for speech detection.
-        Should be called at the start of each trial.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return
-
-        self._vad.reset()
-        self._monotonic_start = time.monotonic()
-        self.logger.debug("VAD monitoring started")
-
-    def stop_vad_monitoring(self) -> list[dict[str, Any]]:
-        """Stop tracking speech and get accumulated VAD events.
-
-        Returns:
-            List of VAD events (speech_start, speech_end) with timestamps.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return []
-
-        events = self._vad.get_events()
-        self.logger.debug("VAD monitoring stopped, %d events recorded", len(events))
-        return events
-
-    def set_stop_cue_time(self) -> float | None:
-        """Record the time when STOP state appeared on screen.
-
-        Called when STOP state appears to measure speech cessation latency.
-
-        Returns:
-            Relative timestamp (seconds from recording start) or None if VAD disabled.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return None
-
-        # Calculate timestamp relative to recording start
-        timestamp = time.monotonic() - self._monotonic_start
-        self._vad.set_stop_cue_time(timestamp)
-        self.logger.debug("Stop cue time recorded: %.3f", timestamp)
-        return timestamp
-
-    def get_vad_events(self) -> list[dict[str, Any]]:
-        """Return list of VAD events for current trial.
-
-        Returns:
-            List of VAD event dictionaries, or empty list if VAD not enabled.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return []
-        return self._vad.get_events()
-
-    def get_speech_cessation_latency(self) -> float | None:
-        """Return latency from STOP cue to silence.
-
-        Returns:
-            Time in seconds from stop_cue_time to speech_end_time,
-            or None if speech hasn't stopped or stop cue wasn't set.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return None
-        return self._vad.get_speech_cessation_latency()
-
-    @property
-    def vad_enabled(self) -> bool:
-        """Check if VAD is currently enabled."""
-        return self._vad_enabled and self._vad is not None
-
-    @property
-    def vad_is_speaking(self) -> bool:
-        """Check if speech is currently detected.
-
-        Returns:
-            True if speech is detected, False otherwise or if VAD not enabled.
-        """
-        if not self._vad_enabled or self._vad is None:
-            return False
-        return self._vad.is_speaking

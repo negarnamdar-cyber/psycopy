@@ -4,14 +4,18 @@ Tests verify:
 - 5 blocks x 6 trials = 30 trials total
 - All trials are vowel trials
 - Each trial has 3-7 GO segments, each 3-7 seconds
-- All CSV files created (trials.csv, medoc_events.csv, vad_events.csv, events.csv)
+- All CSV files created (trials.csv, medoc_events.csv, events.csv)
 - Config snapshot exists (config.json)
+
+VAD is now performed offline via scripts/process_vad.py; these tests verify
+the experiment records audio and logs STOP/GO cues to events.csv.
 
 Uses mock everything - no real hardware required.
 """
 
 from __future__ import annotations
 
+import csv
 import json
 import shutil
 import sys
@@ -68,12 +72,6 @@ class MockAudioService:
     def __init__(self):
         self._recording = False
         self._recording_path = None
-        self.vad_enabled = True
-        self._vad_events: list[dict] = [
-            {"type": "speech_start", "timestamp": 0.5, "is_speech": True},
-            {"type": "speech_end", "timestamp": 1.2, "is_speech": False},
-        ]
-        self._stop_cue_time = None
 
     def preflight(self):
         self._preflight_called = True
@@ -87,22 +85,6 @@ class MockAudioService:
 
     def abort(self):
         self._recording = False
-
-    def enable_vad(self, config):
-        self.vad_enabled = config.vad_enabled
-
-    def start_vad_monitoring(self):
-        pass
-
-    def stop_vad_monitoring(self):
-        return self._vad_events.copy()
-
-    def set_stop_cue_time(self):
-        self._stop_cue_time = 0.5
-        return 0.5
-
-    def get_speech_cessation_latency(self):
-        return None
 
     @property
     def is_recording(self):
@@ -555,7 +537,7 @@ class TestCSVOutputValidation:
             for col in required_columns:
                 assert col in header, f"Missing column in medoc_events.csv: {col}"
 
-    def test_e2e_vad_events_csv(
+    def test_e2e_stop_go_cues_logged(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -564,7 +546,7 @@ class TestCSVOutputValidation:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: vad_events.csv exists with required columns."""
+        """QA Scenario: events.csv contains stop_cue and go_cue events for offline VAD."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -586,7 +568,7 @@ class TestCSVOutputValidation:
                 session_id="01",
                 random_seed="42",
                 medoc_config=MedocConfig(medoc_ip="192.168.1.100", medoc_port=5000),
-                vad_enabled=True,
+                vad_enabled=False,
             )
 
             exp = MedocExperiment(config)
@@ -595,18 +577,25 @@ class TestCSVOutputValidation:
             exp.run()
             exp.save_all_loggers()
 
-            # Read vad_events.csv
-            vad_path = mock_session_paths.vad_file
-            assert vad_path.exists(), "vad_events.csv not created"
+            # Read events.csv
+            events_path = mock_session_paths.events_file
+            assert events_path.exists(), "events.csv not created"
 
-            content = vad_path.read_text()
+            content = events_path.read_text()
             lines = content.strip().split("\n")
+            reader = csv.DictReader(lines)
 
-            # Verify header columns
-            header = lines[0]
-            required_columns = ["trial_instance_id", "event_type", "timestamp"]
-            for col in required_columns:
-                assert col in header, f"Missing column in vad_events.csv: {col}"
+            stop_cues = 0
+            go_cues = 0
+            for row in reader:
+                et = row.get("event_type", "")
+                if "stop_cue" in et:
+                    stop_cues += 1
+                elif "go_cue" in et:
+                    go_cues += 1
+
+            assert stop_cues > 0, "Expected stop_cue events in events.csv for offline VAD"
+            assert go_cues > 0, "Expected go_cue events in events.csv for offline VAD"
 
     def test_e2e_events_csv(
         self,
