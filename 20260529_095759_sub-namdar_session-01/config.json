@@ -1,0 +1,28 @@
+{
+  "participant_id": "namdar",
+  "session_id": "01",
+  "random_seed": "",
+  "sample_rate": 44100,
+  "fullscreen": true,
+  "vad_enabled": true,
+  "vad_aggressiveness": 2,
+  "vad_frame_duration_ms": 30,
+  "vad_silence_frames": 10,
+  "vad_target_rate": 16000,
+  "mode": "normal",
+  "medoc_config": {
+    "medoc_ip": "10.196.94.38",
+    "medoc_port": 20121,
+    "medoc_timeout": 5.0,
+    "baseline_temp": 30.0,
+    "require_connection": true
+  },
+  "metadata": {
+    "schema_version": "1.0",
+    "app_version": "0.3.0",
+    "python_version": "3.10.6 (tags/v3.10.6:9c7b4bd, Aug  1 2022, 21:53:49) [MSC v.1932 64 bit (AMD64)]",
+    "platform": "Windows-10-10.0.22621-SP0",
+    "created_at_utc": "2026-05-29T13:57:59.816875+00:00"
+  },
+  "created_at_utc": "2026-05-29T13:57:59.817880+00:00"
+}

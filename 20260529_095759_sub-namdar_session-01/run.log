@@ -1,0 +1,50 @@
+2026-05-29T09:57:59 INFO psycopy Initializing Medoc experiment
+2026-05-29T09:58:00 INFO psycopy.audio VAD enabled: aggressiveness=2, frame_duration=30ms, silence_frames=10
+2026-05-29T09:58:01 INFO psycopy Generated 5 blocks with 6 trials each
+2026-05-29T09:58:47 INFO psycopy.medoc SELECT_TP unified OK (A)
+2026-05-29T09:58:48 INFO psycopy.medoc Unified program verified running (test_state=1)
+2026-05-29T09:58:48 INFO psycopy Medoc unified program 11000000 started for block 0
+2026-05-29T09:58:48 INFO psycopy Starting block 1 of 5
+2026-05-29T09:58:48 INFO psycopy Trial 0.0 started at 4340.921
+2026-05-29T09:58:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-000.wav
+2026-05-29T09:59:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-000.wav
+2026-05-29T09:59:48 INFO psycopy Trial 0.0 complete: segments=5 duration=60.094s
+2026-05-29T09:59:48 INFO psycopy Logged trial 0.0: segments=5
+2026-05-29T09:59:48 INFO psycopy Trial 0.1 started at 4401.015
+2026-05-29T09:59:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-001.wav
+2026-05-29T10:00:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-001.wav
+2026-05-29T10:00:48 INFO psycopy Trial 0.1 complete: segments=4 duration=60.094s
+2026-05-29T10:00:48 INFO psycopy Logged trial 0.1: segments=4
+2026-05-29T10:00:48 INFO psycopy Trial 0.2 started at 4461.109
+2026-05-29T10:00:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-002.wav
+2026-05-29T10:01:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-002.wav
+2026-05-29T10:01:48 INFO psycopy Trial 0.2 complete: segments=5 duration=60.125s
+2026-05-29T10:01:48 INFO psycopy Logged trial 0.2: segments=5
+2026-05-29T10:01:48 INFO psycopy Trial 0.3 started at 4521.234
+2026-05-29T10:01:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-003.wav
+2026-05-29T10:02:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-003.wav
+2026-05-29T10:02:48 INFO psycopy Trial 0.3 complete: segments=4 duration=60.156s
+2026-05-29T10:02:48 INFO psycopy Logged trial 0.3: segments=4
+2026-05-29T10:02:48 INFO psycopy Trial 0.4 started at 4581.390
+2026-05-29T10:02:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-004.wav
+2026-05-29T10:03:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-004.wav
+2026-05-29T10:03:48 INFO psycopy Trial 0.4 complete: segments=3 duration=60.110s
+2026-05-29T10:03:48 INFO psycopy Logged trial 0.4: segments=3
+2026-05-29T10:03:48 INFO psycopy Trial 0.5 started at 4641.500
+2026-05-29T10:03:48 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-005.wav
+2026-05-29T10:04:48 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-0_trial-005.wav
+2026-05-29T10:04:48 INFO psycopy Trial 0.5 complete: segments=6 duration=60.078s
+2026-05-29T10:04:48 INFO psycopy Logged trial 0.5: segments=6
+2026-05-29T10:04:48 INFO psycopy Block 0 complete: 6 trials executed
+2026-05-29T10:04:59 INFO psycopy Medoc disconnected before break
+2026-05-29T10:04:59 INFO psycopy Starting 1-minute break after block 1
+2026-05-29T10:05:59 INFO psycopy.medoc SELECT_TP unified OK (A)
+2026-05-29T10:06:00 INFO psycopy.medoc Unified program verified running (test_state=1)
+2026-05-29T10:06:00 INFO psycopy Medoc unified program 11000000 started for block 1
+2026-05-29T10:06:00 INFO psycopy Starting block 2 of 5
+2026-05-29T10:06:00 INFO psycopy Trial 1.0 started at 4773.687
+2026-05-29T10:06:00 INFO psycopy.audio Audio recording started: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-1_trial-000.wav
+2026-05-29T10:06:04 INFO psycopy Trial 1.0 interrupted by graceful shutdown
+2026-05-29T10:06:04 INFO psycopy.audio Audio recording stopped: data\20260529_095759_sub-namdar_session-01\audio\sub-namdar_block-1_trial-000.wav
+2026-05-29T10:06:04 WARNING psycopy User requested graceful shutdown
+2026-05-29T10:06:04 INFO psycopy All loggers saved to disk
