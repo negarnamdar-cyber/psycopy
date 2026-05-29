@@ -105,6 +105,7 @@ class SessionInfo:
     events_csv: Path
     output_dir: Path
     recordings: list[AudioRecording]
+    temperature_data: dict[str, list[dict[str, Any]]]  # trial_id -> readings
 
 
 # =============================================================================
@@ -148,6 +149,59 @@ def _parse_event_data(data_str: str) -> dict[str, Any]:
         return json.loads(data_str)
     except json.JSONDecodeError:
         return {}
+
+
+def load_temperature_data(medoc_csv: Path) -> dict[str, list[dict[str, Any]]]:
+    """Read medoc_events.csv and return temperature per trial_instance_id.
+
+    Returns a dict mapping trial_instance_id -> list of temperature readings,
+    each reading is {"timestamp": float, "temperature_celsius": float|""}.
+    """
+    if not medoc_csv.exists():
+        return {}
+
+    temps: dict[str, list[dict[str, Any]]] = {}
+    for row in load_events_csv(medoc_csv):
+        trial_id = row.get("trial_instance_id", "")
+        if not trial_id:
+            continue
+        temp_str = row.get("temperature_celsius", "").strip()
+        ts_str = row.get("status_timestamp", "").strip() or row.get("trigger_timestamp", "").strip()
+        try:
+            temp_val = float(temp_str) if temp_str else None
+        except ValueError:
+            temp_val = None
+        try:
+            ts_val = float(ts_str) if ts_str else None
+        except ValueError:
+            ts_val = None
+
+        if temp_val is not None:
+            temps.setdefault(trial_id, []).append(
+                {"timestamp": ts_val, "temperature_celsius": temp_val}
+            )
+    return temps
+
+
+def match_temperature_for_segment(
+    trial_id: str,
+    segment_start_sec: float,
+    segment_end_sec: float,
+    temp_data: dict[str, list[dict[str, Any]]],
+) -> float | None:
+    """Find the temperature reading closest to the segment start time.
+
+    For now returns the first available temperature for the trial.
+    Future: interpolate or match by exact timestamp.
+    """
+    readings = temp_data.get(trial_id, [])
+    if not readings:
+        return None
+    # Simple: average all readings for this trial
+    valid = [r["temperature_celsius"] for r in readings if r["temperature_celsius"] is not None]
+    if not valid:
+        return None
+    return round(sum(valid) / len(valid), 2)
 
 
 def discover_recordings(session_dir: Path) -> list[AudioRecording]:
@@ -220,12 +274,13 @@ def _resolve_wav(audio_dir: Path, trial_instance_id: str, block: str) -> Path | 
 def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
     """Return all GO and STOP cues for a trial from events.csv.
 
-    New-format sessions have explicit ``go_cue`` / ``stop_cue`` events.
+    New-format sessions have explicit ``go_cue`` / ``stop_cue`` events
+    (with per-segment ``temperature_celsius`` if available).
     Old-format sessions have ``trial_start`` with ``go_durations`` in
     ``event_data`` — we reconstruct the cue times from that.
 
     Returns list of dicts with keys: ``cue_type`` ("go"|"stop"),
-    ``timestamp_sec``, ``segment_index``.
+    ``timestamp_sec``, ``segment_index``, ``temperature_celsius``.
     """
     cues: list[dict[str, Any]] = []
     events = load_events_csv(events_csv)
@@ -240,11 +295,13 @@ def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
         data = _parse_event_data(row.get("event_data", ""))
         elapsed = data.get("trial_elapsed_sec")
         if elapsed is not None:
+            temp = data.get("temperature_celsius")
             cues.append(
                 {
                     "cue_type": "go" if et == "go_cue" else "stop",
                     "timestamp_sec": float(elapsed),
                     "segment_index": data.get("segment_index", 0),
+                    "temperature_celsius": temp,
                 }
             )
 
@@ -275,6 +332,7 @@ def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
                     "cue_type": "stop",
                     "timestamp_sec": round(elapsed, 3),
                     "segment_index": idx,
+                    "temperature_celsius": None,
                 }
             )
             elapsed += stop_duration
@@ -284,6 +342,7 @@ def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
                     "cue_type": "go",
                     "timestamp_sec": round(elapsed, 3),
                     "segment_index": idx,
+                    "temperature_celsius": None,
                 }
             )
             elapsed += float(go_dur)
@@ -294,6 +353,7 @@ def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
                 "cue_type": "stop",
                 "timestamp_sec": round(elapsed, 3),
                 "segment_index": len(go_durations),
+                "temperature_celsius": None,
             }
         )
 
@@ -463,6 +523,7 @@ def run_vad(
             if best_start
             else None
         )
+        temp = cue.get("temperature_celsius")
         rows.append(
             {
                 "event_type": "speech_start",
@@ -473,6 +534,7 @@ def run_vad(
                 "latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
                 "go_latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
                 "stop_latency_ms": "",
+                "temperature_celsius": temp if temp is not None else "",
             }
         )
 
@@ -489,6 +551,7 @@ def run_vad(
         latency_ms = (
             (best_end["timestamp"] - cue["timestamp_sec"]) * 1000.0 if best_end else None
         )
+        temp = cue.get("temperature_celsius")
         rows.append(
             {
                 "event_type": "speech_end",
@@ -499,6 +562,7 @@ def run_vad(
                 "latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
                 "go_latency_ms": "",
                 "stop_latency_ms": round(latency_ms, 1) if latency_ms is not None else "",
+                "temperature_celsius": temp if temp is not None else "",
             }
         )
 
@@ -513,6 +577,17 @@ def run_vad(
         unique.append(ev)
 
     return unique
+
+
+def _get_temp_for_trial(
+    temp_data: dict[str, list[dict[str, Any]]], trial_id: str
+) -> str:
+    """Return average temperature for a trial, or empty string if missing."""
+    readings = temp_data.get(trial_id, [])
+    valid = [r["temperature_celsius"] for r in readings if r["temperature_celsius"] is not None]
+    if not valid:
+        return ""
+    return str(round(sum(valid) / len(valid), 2))
 
 
 def process_vad_for_session(session: SessionInfo) -> dict[str, Any]:
@@ -683,6 +758,7 @@ def extract_vowel_features(session: SessionInfo) -> dict[str, Any]:
             skipped += 1
             continue
 
+        temp_str = _get_temp_for_trial(session.temperature_data, rec.trial_instance_id)
         for w in windows:
             s0 = max(0, int(round(w["start_sec"] * TARGET_SAMPLE_RATE)))
             s1 = min(len(audio_16k), int(round(w["end_sec"] * TARGET_SAMPLE_RATE)))
@@ -694,6 +770,7 @@ def extract_vowel_features(session: SessionInfo) -> dict[str, Any]:
                 continue
             row: dict[str, Any] = {
                 "trial_instance_id": rec.trial_instance_id,
+                "temperature_celsius": temp_str,
                 "block": rec.block,
                 "audio_type": "vowel",
                 "audio_filename": rec.wav_path.name,
@@ -760,8 +837,12 @@ def extract_speech_features(session: SessionInfo) -> dict[str, Any]:
         if not feats:
             continue
 
+        temp_str = _get_temp_for_trial(
+            session.temperature_data, rec.trial_instance_id or rec.wav_path.stem
+        )
         row: dict[str, Any] = {
             "trial_instance_id": rec.trial_instance_id or rec.wav_path.stem,
+            "temperature_celsius": temp_str,
             "block": rec.block or "speech",
             "audio_type": "speech",
             "audio_filename": rec.wav_path.name,
@@ -816,9 +897,14 @@ def process_speech_diarization(session: SessionInfo) -> dict[str, Any]:
         voiced_frames = (energy > threshold).sum()
         voiced_ratio = voiced_frames / len(audio) if len(audio) > 0 else 0.0
 
+        temp_str = _get_temp_for_trial(
+            session.temperature_data, rec.trial_instance_id or rec.wav_path.stem
+        )
+
         rows.append(
             {
                 "trial_instance_id": rec.trial_instance_id or rec.wav_path.stem,
+                "temperature_celsius": temp_str,
                 "block": rec.block or "speech",
                 "audio_filename": rec.wav_path.name,
                 "duration_sec": round(duration, 3),
@@ -885,12 +971,18 @@ def process_session(session_dir: Path, force: bool = False) -> dict[str, Any]:
         logger.warning("No recordings discovered in %s", session_dir.name)
         return {"status": "no_recordings", "session": session_dir.name}
 
+    # Load temperature data from medoc_events.csv (if present)
+    temp_data = load_temperature_data(session_dir / "medoc_events.csv")
+    if temp_data:
+        logger.info("Loaded temperature data for %d trials", len(temp_data))
+
     session = SessionInfo(
         session_dir=session_dir,
         audio_dir=session_dir / "audio",
         events_csv=events_csv,
         output_dir=session_dir,
         recordings=recordings,
+        temperature_data=temp_data,
     )
 
     logger.info("Processing session: %s (%d recordings)", session_dir.name, len(recordings))

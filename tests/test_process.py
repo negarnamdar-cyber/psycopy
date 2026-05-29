@@ -267,3 +267,16 @@ class TestProcessSession:
         assert len(rows) == 1
         assert rows[0]["session_id"] == tmp_vowel_session.name
         assert rows[0]["num_vowel_trials"] == "1"
+
+    def test_temperature_in_vad_events(self, tmp_vowel_session: Path):
+        from scripts.process import find_cues, run_vad
+
+        cues = find_cues(tmp_vowel_session / "events.csv", "001_01_block0_000")
+        # New format should have temperature_celsius key
+        assert "temperature_celsius" in cues[0]
+
+        wav_path = tmp_vowel_session / "audio" / "sub-001_block-0_trial-000.wav"
+        events = run_vad(wav_path, cues)
+        # VAD rows should carry temperature
+        for ev in events:
+            assert "temperature_celsius" in ev

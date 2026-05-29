@@ -208,23 +208,13 @@ class MedocExperiment:
             num_stop_periods = trial_config.num_go_segments + 1
             stop_duration = (TRIAL_DURATION_SEC - total_go_time) / num_stop_periods
 
-            next_poll_at = 30.0
-            for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
-                # Log STOP cue for offline VAD latency computation
-                stop_cue_ts = time.monotonic()
-                self.event_logger.log(
-                    event_type="stop_cue",
-                    trial_instance_id=trial_instance_id,
-                    block=f"block{set_num}",
-                    event_data={
-                        "segment_index": seg_idx,
-                        "cue_duration_sec": round(stop_duration, 3),
-                        "trial_elapsed_sec": round(stop_cue_ts - trigger_timestamp, 3),
-                    },
-                )
-                self._display_state(TaskState.STOP, VOWEL_TEXT)
-                self.ui.wait(stop_duration)
+            # Poll Medoc every 5 seconds during trials for higher-resolution
+            # temperature data that can be matched to individual GO/STOP segments.
+            next_poll_at = 5.0
+            current_temperature: float | None = None
 
+            for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
+                # --- Poll before STOP cue if interval hit -------------------
                 elapsed = time.monotonic() - trigger_timestamp
                 if client is not None and elapsed >= next_poll_at:
                     status = self._poll_and_log(
@@ -235,14 +225,51 @@ class MedocExperiment:
                         time.monotonic(),
                     )
                     if status is not None:
-                        temperature_celsius = status.get("temperature_celsius")
+                        current_temperature = status.get("temperature_celsius")
+                        temperature_celsius = current_temperature
                         temperature_raw = status.get("raw_bytes")
                         device_state = status.get("device_state")
                         test_state = status.get("test_state")
                         response_code = status.get("response_code")
-                    next_poll_at += 30.0
+                    next_poll_at += 5.0
 
-                # Log GO cue for offline analysis
+                # Log STOP cue with most recent temperature
+                stop_cue_ts = time.monotonic()
+                self.event_logger.log(
+                    event_type="stop_cue",
+                    trial_instance_id=trial_instance_id,
+                    block=f"block{set_num}",
+                    event_data={
+                        "segment_index": seg_idx,
+                        "cue_type": "stop",
+                        "cue_duration_sec": round(stop_duration, 3),
+                        "trial_elapsed_sec": round(stop_cue_ts - trigger_timestamp, 3),
+                        "temperature_celsius": current_temperature,
+                    },
+                )
+                self._display_state(TaskState.STOP, VOWEL_TEXT)
+                self.ui.wait(stop_duration)
+
+                # --- Poll during STOP if interval hit ----------------------
+                elapsed = time.monotonic() - trigger_timestamp
+                if client is not None and elapsed >= next_poll_at:
+                    status = self._poll_and_log(
+                        client,
+                        trial_instance_id,
+                        set_num,
+                        trial_num,
+                        time.monotonic(),
+                    )
+                    if status is not None:
+                        current_temperature = status.get("temperature_celsius")
+                        temperature_celsius = current_temperature
+                        temperature_raw = status.get("raw_bytes")
+                        device_state = status.get("device_state")
+                        test_state = status.get("test_state")
+                        response_code = status.get("response_code")
+                    next_poll_at += 5.0
+
+                # Log GO cue with most recent temperature
                 go_cue_ts = time.monotonic()
                 self.event_logger.log(
                     event_type="go_cue",
@@ -250,19 +277,22 @@ class MedocExperiment:
                     block=f"block{set_num}",
                     event_data={
                         "segment_index": seg_idx,
+                        "cue_type": "go",
                         "cue_duration_sec": round(go_duration, 3),
                         "trial_elapsed_sec": round(go_cue_ts - trigger_timestamp, 3),
+                        "temperature_celsius": current_temperature,
                     },
                 )
                 self._display_state(TaskState.GO, VOWEL_TEXT)
                 self.ui.wait(go_duration)
 
                 self.logger.debug(
-                    "Trial %d.%d segment %d: GO for %.2fs",
+                    "Trial %d.%d segment %d: GO for %.2fs temp=%s°C",
                     set_num,
                     trial_num,
                     seg_idx,
                     go_duration,
+                    current_temperature,
                 )
 
             # Final STOP cue
@@ -273,8 +303,10 @@ class MedocExperiment:
                 block=f"block{set_num}",
                 event_data={
                     "segment_index": trial_config.num_go_segments,
+                    "cue_type": "stop",
                     "cue_duration_sec": round(stop_duration, 3),
                     "trial_elapsed_sec": round(final_stop_ts - trigger_timestamp, 3),
+                    "temperature_celsius": current_temperature,
                 },
             )
             self._display_state(TaskState.STOP, VOWEL_TEXT)
@@ -284,6 +316,7 @@ class MedocExperiment:
             if remaining > 0:
                 self.ui.wait(remaining)
 
+            # Final poll at end of trial
             if client is not None:
                 status = self._poll_and_log(
                     client,
