@@ -2,8 +2,8 @@
 
 Generates trial schedules with constrained randomization.
 
-Structure: 5 blocks of 6 trials = 30 total trials.
-Each trial is a 60-second vowel task with alternating STOP/GO segments.
+Default structure: 5 blocks of 1 trial = 5 total trials.
+Each trial is a 4-minute (240-second) vowel task with alternating STOP/GO segments.
 All trials use the unified Medoc program (experiment 192).
 """
 
@@ -81,34 +81,29 @@ def generate_trials(
 ) -> list[list[TrialConfig]]:
     """Generate randomized trial schedule.
 
-    Generates 5 blocks of 6 trials each (30 total).
-    Each trial has 3-7 GO segments (each 3-7 seconds) within a 60-second window.
+    Each trial has 3-7 GO segments (each 3-7 seconds) within a 4-minute window.
     All trials use the unified Medoc program (experiment 192).
-    `num_stop_trials_ratio` and the `num_sets` / `trials_per_set` arguments are
-    ignored (retained for API compatibility).
+    `num_stop_trials_ratio` is ignored (retained for API compatibility).
 
     Args:
-        num_sets: Ignored (always 5 blocks).
-        trials_per_set: Ignored (always 6 trials per block).
+        num_sets: Number of blocks.
+        trials_per_set: Number of trials per block.
         num_stop_trials_ratio: Retained for API compatibility; ignored.
         rng: Seeded Random instance for reproducibility
 
     Returns:
         List of blocks, each block is a list of TrialConfig instances.
     """
-    num_blocks = 5
-    trials_per_block = 6
-
     all_blocks: list[list[TrialConfig]] = []
 
-    for _ in range(num_blocks):
+    for _ in range(num_sets):
         block: list[TrialConfig] = []
-        for _ in range(trials_per_block):
+        for _ in range(trials_per_set):
             num_go = rng.randint(3, 7)
             # Reserve ~1 s per STOP period so there is always some STOP time.
             # With (num_go + 1) STOP periods, reserve that many seconds.
             reserved_for_stop = float(num_go + 1)
-            max_go_total = 60.0 - reserved_for_stop
+            max_go_total = 240.0 - reserved_for_stop
 
             go_durs = _generate_go_durations(
                 num_segments=num_go,

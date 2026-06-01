@@ -245,7 +245,7 @@ class PsychoPyUI:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
                     "Vowel Experiment with Thermal Stimulation\n\n"
-                    "Each trial lasts 60 seconds.\n"
+                    "Each trial lasts 4 minutes.\n"
                     "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
                     "IMPORTANT:\n"
                     "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
@@ -254,20 +254,20 @@ class PsychoPyUI:
                     "  • The screen will switch multiple times per trial\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
                     "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
+                    "There will be 5 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Each trial lasts 60 seconds.\n"
+                    "Each trial lasts 4 minutes.\n"
                     "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
                     "IMPORTANT:\n"
                     "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
                     "  • STOP immediately when the screen turns RED\n"
                     "  • Stay silent during STOP periods\n"
                     "  • The screen will switch multiple times per trial\n\n"
-                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
+                    "There will be 5 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
         else:
@@ -275,21 +275,21 @@ class PsychoPyUI:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
                     "Vowel Experiment with Thermal Stimulation\n\n"
-                    "Each trial lasts 60 seconds.\n"
+                    "Each trial lasts 4 minutes.\n"
                     "The screen will stay GREEN throughout each trial.\n"
                     "Speak 'Ahh' continuously.\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
                     "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
+                    "There will be 5 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
                     "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Each trial lasts 60 seconds.\n"
+                    "Each trial lasts 4 minutes.\n"
                     "The screen will stay GREEN throughout each trial.\n"
                     "Speak 'Ahh' continuously.\n\n"
-                    "There will be 5 blocks of 6 trials, with a 1-minute break between blocks.\n\n"
+                    "There will be 5 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
         self.instruction_text.text = instructions
@@ -329,6 +329,20 @@ class PsychoPyUI:
         while (self.exp_clock.getTime() - start) < duration:
             self._check_escape()
             self.core.wait(0.016)
+
+    def show_progress(self, fraction: float) -> None:
+        """Update trial progress bar (0.0 to 1.0)."""
+        fraction = max(0.0, min(1.0, fraction))
+        self.progress_bar.width = self.progress_bar_bg.width * fraction
+        left_edge = self.progress_bar_bg.pos[0] - self.progress_bar_bg.width / 2
+        self.progress_bar.pos = (
+            left_edge + self.progress_bar.width / 2,
+            self.progress_bar_bg.pos[1],
+        )
+
+    def hide_progress(self) -> None:
+        """Hide the progress bar."""
+        self.progress_bar.width = 0
 
     def apply_state(self, state: TaskState) -> None:
         if state is TaskState.GO:

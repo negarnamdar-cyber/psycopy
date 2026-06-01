@@ -115,10 +115,10 @@ def mock_time():
         yield
 
 
-class TestRunSetSixTrials:
-    """QA Scenario 1: Set executes 6 trials."""
+class TestRunSetOneTrial:
+    """QA Scenario 1: Set executes 1 trial."""
 
-    def test_run_set_executes_six_trials(
+    def test_run_set_executes_one_trial(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -128,7 +128,7 @@ class TestRunSetSixTrials:
         mock_logger,
         mock_time,
     ):
-        """Test that run_set() executes exactly 6 trials."""
+        """Test that run_set() executes exactly 1 trial."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -158,9 +158,9 @@ class TestRunSetSixTrials:
             trials = exp.trials[0]
             exp.run_set(0, trials)
 
-            # Verify 6 trials were logged
+            # Verify 1 trial was logged
             trial_count = len(exp.trial_logger.trials)
-            assert trial_count == 6, f"Expected 6 trials, got {trial_count}"
+            assert trial_count == 1, f"Expected 1 trial, got {trial_count}"
 
     def test_run_set_all_vowel_trials(
         self,
@@ -207,7 +207,7 @@ class TestRunSetSixTrials:
             vowel_count = task_types.count("vowel")
             sentence_count = task_types.count("sentence")
 
-            assert vowel_count == 6, f"Expected 6 vowel trials, got {vowel_count}"
+            assert vowel_count == 1, f"Expected 1 vowel trial, got {vowel_count}"
             assert sentence_count == 0, f"Expected 0 sentence trials, got {sentence_count}"
 
 
@@ -264,7 +264,7 @@ class TestRunFiveBlocks:
                 f"Expected 4 break calls (between 5 blocks), got {len(break_calls)}"
             )
 
-    def test_run_full_experiment_thirty_trials(
+    def test_run_full_experiment_five_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -274,7 +274,7 @@ class TestRunFiveBlocks:
         mock_logger,
         mock_time,
     ):
-        """Test that run() executes all 30 trials (5 blocks x 6 trials)."""
+        """Test that run() executes all 5 trials (5 blocks x 1 trial)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -306,9 +306,9 @@ class TestRunFiveBlocks:
             # Run full experiment
             exp.run()
 
-            # Verify total trials = 5 blocks x 6 trials = 30
+            # Verify total trials = 5 blocks x 1 trial = 5
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
+            assert total_trials == 5, f"Expected 5 trials, got {total_trials}"
 
 
 class TestUserAbortSavesData:
@@ -358,15 +358,15 @@ class TestUserAbortSavesData:
             # Mock _show_break_screen
             exp._show_break_screen = MagicMock()
 
-            # Patch run_trial to raise UserAbort on trial 5 (second block, trial 5)
+            # Patch run_trial to raise UserAbort on trial 5 (block 4, trial 0)
             original_run_trial = exp.run_trial
             call_count = [0]
 
-            def abort_on_trial_5(set_num, trial_num, trial_config):
+            def abort_on_trial_5(set_num, trial_num, trial_config, client=None):
                 call_count[0] += 1
                 if call_count[0] == 5:  # Abort on 5th overall trial
                     raise UserAbort()
-                return original_run_trial(set_num, trial_num, trial_config)
+                return original_run_trial(set_num, trial_num, trial_config, client=client)
 
             exp.run_trial = abort_on_trial_5
 

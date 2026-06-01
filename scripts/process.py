@@ -322,7 +322,7 @@ def find_cues(events_csv: Path, trial_instance_id: str) -> list[dict[str, Any]]:
 
         total_go = sum(float(d) for d in go_durations)
         num_stop_periods = len(go_durations) + 1
-        stop_duration = (60.0 - total_go) / num_stop_periods
+        stop_duration = (240.0 - total_go) / num_stop_periods
 
         elapsed = 0.0
         for idx, go_dur in enumerate(go_durations):

@@ -7,15 +7,16 @@ VAD coordination, and data logging.
 Two experiment modes are supported:
 
 1. Vowel mode (NORMAL / PRACTICE):
-   - 5 blocks of 6 trials each = 30 total trials
-   - Each trial: 60 seconds of alternating STOP/GO segments
+   - 5 blocks of 1 trial each = 5 total trials
+   - Each trial: 4 minutes (240 seconds) of alternating STOP/GO segments
    - 1-minute break between blocks
-   - Total experiment time: ~35 minutes
+   - Total experiment time: ~25 minutes
 
 2. Speech mode (SPEECH):
    - Free speech interview with thermal stimulation
+   - Repeating cycles of 4 minutes speaking + 1 minute break
+   - Continues until the researcher triggers graceful shutdown (Q + 12345)
    - Continuous unified Medoc program (experiment 192)
-   - Only graceful shutdown (Q + 12345) stops the experiment
    - ESC is disabled — only coded shutdown works
 """
 
@@ -44,7 +45,7 @@ from psycopy.runtime import PsychoPyUI, UserAbort
 from psycopy.trial_generator import TrialConfig, generate_trials
 from psycopy.validation import validate_config
 
-TRIAL_DURATION_SEC = 60.0
+TRIAL_DURATION_SEC = 240.0
 BLOCK_BREAK_SEC = 60.0
 VOWEL_TEXT = "Ahh"
 
@@ -106,7 +107,7 @@ class MedocExperiment:
         else:
             self.trials = generate_trials(
                 num_sets=num_blocks,
-                trials_per_set=6,
+                trials_per_set=1,
                 num_stop_trials_ratio=0.0,
                 rng=self.rng,
             )
@@ -125,12 +126,16 @@ class MedocExperiment:
         else:
             self.logger.info("Speech mode: no structured trials.")
 
-    def _display_state(self, state: TaskState, stimulus_text: str) -> None:
+    def _display_state(self, state: TaskState, stimulus_text: str, progress: float | None = None) -> None:
         self.ui.apply_state(state)
         self.ui.sentence_text.text = stimulus_text
         self.ui.sentence_text.draw()
         self.ui.state_background.draw()
         self.ui.state_indicator.draw()
+        if progress is not None:
+            self.ui.show_progress(progress)
+            self.ui.progress_bar_bg.draw()
+            self.ui.progress_bar.draw()
         self.ui.win.flip()
 
     def run_trial(
@@ -216,6 +221,7 @@ class MedocExperiment:
             for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
                 # --- Poll before STOP cue if interval hit -------------------
                 elapsed = time.monotonic() - trigger_timestamp
+                progress = min(elapsed / TRIAL_DURATION_SEC, 1.0)
                 if client is not None and elapsed >= next_poll_at:
                     status = self._poll_and_log(
                         client,
@@ -247,11 +253,12 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.STOP, VOWEL_TEXT)
+                self._display_state(TaskState.STOP, VOWEL_TEXT, progress=progress)
                 self.ui.wait(stop_duration)
 
                 # --- Poll during STOP if interval hit ----------------------
                 elapsed = time.monotonic() - trigger_timestamp
+                progress = min(elapsed / TRIAL_DURATION_SEC, 1.0)
                 if client is not None and elapsed >= next_poll_at:
                     status = self._poll_and_log(
                         client,
@@ -283,7 +290,7 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.GO, VOWEL_TEXT)
+                self._display_state(TaskState.GO, VOWEL_TEXT, progress=progress)
                 self.ui.wait(go_duration)
 
                 self.logger.debug(
@@ -297,6 +304,7 @@ class MedocExperiment:
 
             # Final STOP cue
             final_stop_ts = time.monotonic()
+            progress = min((final_stop_ts - trigger_timestamp) / TRIAL_DURATION_SEC, 1.0)
             self.event_logger.log(
                 event_type="stop_cue",
                 trial_instance_id=trial_instance_id,
@@ -309,12 +317,14 @@ class MedocExperiment:
                     "temperature_celsius": current_temperature,
                 },
             )
-            self._display_state(TaskState.STOP, VOWEL_TEXT)
+            self._display_state(TaskState.STOP, VOWEL_TEXT, progress=progress)
 
             elapsed = time.monotonic() - trigger_timestamp
             remaining = TRIAL_DURATION_SEC - elapsed
             if remaining > 0:
                 self.ui.wait(remaining)
+
+            self.ui.hide_progress()
 
             # Final poll at end of trial
             if client is not None:
@@ -524,7 +534,7 @@ class MedocExperiment:
                 timestamp=trigger_timestamp,
             )
 
-        self._show_speech_screen_with_timer(360.0, cycle_idx, client, trial_instance_id)
+        self._show_speech_screen_with_timer(240.0, cycle_idx, client, trial_instance_id)
 
         self.logger.info("Speech mode: 1-minute pause after cycle %d", cycle_idx)
         self._show_break_screen(60.0)

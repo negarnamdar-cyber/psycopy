@@ -326,14 +326,14 @@ class TestTrialGenerator:
         rng = Random(42)
         trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
         assert len(trials) == 5
         for block_trials in trials:
-            assert len(block_trials) == 6
+            assert len(block_trials) == 1
 
     def test_trial_distribution_per_block(self):
         from random import Random
@@ -341,7 +341,7 @@ class TestTrialGenerator:
         rng = Random(42)
         trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
@@ -350,7 +350,7 @@ class TestTrialGenerator:
             vowel_count = sum(1 for t in block_trials if t.task_type == "vowel")
             sentence_count = sum(1 for t in block_trials if t.task_type == "sentence")
 
-            assert vowel_count == 6, f"Block {block_idx}: expected 6 vowel, got {vowel_count}"
+            assert vowel_count == 1, f"Block {block_idx}: expected 1 vowel, got {vowel_count}"
             assert sentence_count == 0, f"Block {block_idx}: expected 0 sentence, got {sentence_count}"
 
     def test_go_segments_in_range(self):
@@ -359,7 +359,7 @@ class TestTrialGenerator:
         rng = Random(42)
         trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
@@ -377,7 +377,7 @@ class TestTrialGenerator:
         rng = Random(42)
         trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
@@ -390,8 +390,8 @@ class TestTrialGenerator:
                         f"expected 3-7s, got {dur}"
                     )
                 total_go = sum(trial.go_segment_durations)
-                assert total_go < 60.0, (
-                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 60s"
+                assert total_go < 240.0, (
+                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 240s"
                 )
 
     def test_reproducibility_with_seed(self):
@@ -400,7 +400,7 @@ class TestTrialGenerator:
         rng1 = Random(42)
         trials1 = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng1,
         )
@@ -408,7 +408,7 @@ class TestTrialGenerator:
         rng2 = Random(42)
         trials2 = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng2,
         )
@@ -576,25 +576,25 @@ class TestContextManager:
 class TestFiveBlockRun:
     """Tests for full 5-block run."""
 
-    def test_full_30_trials_simulation(self, tmp_path):
-        """Simulate full 5-block run (30 trial records created)."""
+    def test_full_5_trials_simulation(self, tmp_path):
+        """Simulate full 5-block run (5 trial records created)."""
         from random import Random
 
         rng = Random(42)
         all_trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
 
         total_trials = sum(len(block_trials) for block_trials in all_trials)
-        assert total_trials == 30
+        assert total_trials == 5
 
         vowel_trials = sum(
             sum(1 for t in block_trials if t.task_type == "vowel") for block_trials in all_trials
         )
-        assert vowel_trials == 30
+        assert vowel_trials == 5
 
         sentence_trials = sum(
             sum(1 for t in block_trials if t.task_type == "sentence") for block_trials in all_trials
@@ -608,7 +608,7 @@ class TestFiveBlockRun:
         rng = Random(123)
         all_trials = generate_trials(
             num_sets=5,
-            trials_per_set=6,
+            trials_per_set=1,
             num_stop_trials_ratio=0.0,
             rng=rng,
         )
@@ -619,7 +619,7 @@ class TestFiveBlockRun:
                 assert isinstance(trial_config, TrialConfig)
                 trial_count += 1
 
-        assert trial_count == 30
+        assert trial_count == 5
 
 
 class TestMultipleCommandsInSequence:

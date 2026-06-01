@@ -7,7 +7,7 @@ from __future__ import annotations
 INSTRUCTIONS_MAIN = """
 INSTRUCTIONS
 
-Each trial lasts 60 seconds.
+Each trial lasts 4 minutes.
 The screen will alternate between RED (STOP) and GREEN (GO).
 
 You will sustain a vowel sound ('Ahh') during GO periods.
@@ -17,9 +17,9 @@ IMPORTANT RULES:
   • Speak 'Ahh' ONLY when the screen is GREEN and shows "GO"
   • Stop speaking immediately when the screen turns RED and shows "STOP"
   • Remain silent during STOP periods
-  • The screen will switch multiple times within each 60-second trial
+  • The screen will switch multiple times within each 4-minute trial
 
-There will be 5 blocks of 6 trials, with a 1-minute break between blocks.
+There will be 5 trials, with a 1-minute break between each.
 
 Press SPACE to begin the experiment.
 """
@@ -27,11 +27,11 @@ Press SPACE to begin the experiment.
 INSTRUCTIONS_SEGMENTATION_OFF = """
 INSTRUCTIONS
 
-Each trial lasts 60 seconds.
+Each trial lasts 4 minutes.
 The screen will remain GREEN throughout each trial.
 Speak 'Ahh' continuously.
 
-There will be 5 blocks of 6 trials, with a 1-minute break between blocks.
+There will be 5 trials, with a 1-minute break between each.
 
 Press SPACE to begin the experiment.
 """
@@ -39,7 +39,7 @@ Press SPACE to begin the experiment.
 INSTRUCTIONS_VOWEL = """
 VOWEL TASK INSTRUCTIONS
 
-Each trial lasts 60 seconds.
+Each trial lasts 4 minutes.
 
   • When the screen is GREEN ("GO"): Say "Ahh" and hold
   • When the screen turns RED ("STOP"): Stop immediately

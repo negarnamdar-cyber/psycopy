@@ -1,7 +1,7 @@
 """End-to-end validation test for Medoc experiment flow.
 
 Tests verify:
-- 5 blocks x 6 trials = 30 trials total
+- 5 blocks x 1 trial = 5 trials total
 - All trials are vowel trials
 - Each trial has 3-7 GO segments, each 3-7 seconds
 - All CSV files created (trials.csv, medoc_events.csv, events.csv)
@@ -126,6 +126,22 @@ class MockUI:
         """Mock apply_state - do nothing."""
         pass
 
+    def show_progress(self, fraction):
+        """Mock show_progress - do nothing."""
+        pass
+
+    def hide_progress(self):
+        """Mock hide_progress - do nothing."""
+        pass
+
+    @property
+    def progress_bar_bg(self):
+        return MagicMock()
+
+    @property
+    def progress_bar(self):
+        return MagicMock()
+
     def close(self):
         pass
 
@@ -223,7 +239,7 @@ def experiment_config(medoc_config):
 class TestFullExperimentOutput:
     """E2E test: Run full experiment and validate all outputs."""
 
-    def test_e2e_full_experiment_thirty_trials(
+    def test_e2e_full_experiment_five_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -232,7 +248,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Run E2E test with all mocks, validate 30 trials."""
+        """QA Scenario: Run E2E test with all mocks, validate 5 trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -263,9 +279,9 @@ class TestFullExperimentOutput:
             exp._show_break_screen = MagicMock()
             exp.run()
 
-            # Validate: 5 blocks x 6 trials = 30 trials total
+            # Validate: 5 blocks x 1 trial = 5 trials total
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
+            assert total_trials == 5, f"Expected 5 trials, got {total_trials}"
 
     def test_e2e_trial_distribution_all_vowel(
         self,
@@ -276,7 +292,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Validate all 30 trials are vowel trials."""
+        """QA Scenario: Validate all 5 trials are vowel trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -366,7 +382,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Each GO segment is 3-7 seconds and total GO < 60."""
+        """QA Scenario: Each GO segment is 3-7 seconds and total GO < 240."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -399,8 +415,8 @@ class TestFullExperimentOutput:
                             f"GO segment duration {dur} outside [3, 7]"
                         )
                     total_go = sum(trial.go_segment_durations)
-                    assert total_go < 60.0, (
-                        f"Total GO time {total_go} exceeds 60s"
+                    assert total_go < 240.0, (
+                        f"Total GO time {total_go} exceeds 240s"
                     )
 
 
@@ -421,7 +437,7 @@ class TestCSVOutputValidation:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: trials.csv has 30 rows with required fields."""
+        """QA Scenario: trials.csv has 5 rows with required fields."""
         import pandas as pd
         from psycopy.medoc_experiment import MedocExperiment
 
@@ -458,7 +474,7 @@ class TestCSVOutputValidation:
             assert trials_path.exists(), "trials.csv not created"
 
             df = pd.read_csv(trials_path)
-            assert len(df) == 30, f"Expected 30 rows in trials.csv, got {len(df)}"
+            assert len(df) == 5, f"Expected 5 rows in trials.csv, got {len(df)}"
 
             # Verify required columns
             required_columns = [
@@ -519,10 +535,10 @@ class TestCSVOutputValidation:
             content = medoc_path.read_text()
             lines = content.strip().split("\n")
 
-            # Validate: 30 trigger + 30 status = 60 total (or merged events)
+            # Validate: 5 trigger + 5 status = 10 total (or merged events)
             data_lines = [l for l in lines[1:] if l.strip()]  # Skip header
-            assert len(data_lines) >= 30, (
-                f"Expected at least 30 medoc event rows, got {len(data_lines)}"
+            assert len(data_lines) >= 5, (
+                f"Expected at least 5 medoc event rows, got {len(data_lines)}"
             )
 
             # Verify required columns
@@ -664,10 +680,10 @@ class TestCSVOutputValidation:
                 elif "trial_end" in event_type.lower():
                     trial_ends += 1
 
-            assert trial_starts >= 30, (
-                f"Expected at least 30 trial_start events, got {trial_starts}"
+            assert trial_starts >= 5, (
+                f"Expected at least 5 trial_start events, got {trial_starts}"
             )
-            assert trial_ends >= 30, f"Expected at least 30 trial_end events, got {trial_ends}"
+            assert trial_ends >= 5, f"Expected at least 5 trial_end events, got {trial_ends}"
 
     def test_e2e_config_json_snapshot(
         self,
@@ -727,19 +743,19 @@ class TestCSVOutputValidation:
 class TestTrialGeneratorValidation:
     """Unit tests for trial generator constraints."""
 
-    def test_thirty_trials_total(self):
-        """Validate: 5 blocks x 6 trials = 30 trials total."""
+    def test_five_trials_total(self):
+        """Validate: 5 blocks x 1 trial = 5 trials total."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         total_trials = sum(len(t) for t in trials)
-        assert total_trials == 30, f"Expected 30 trials, got {total_trials}"
+        assert total_trials == 5, f"Expected 5 trials, got {total_trials}"
         assert len(trials) == 5, f"Expected 5 blocks, got {len(trials)}"
 
     def test_all_vowel_trials(self):
-        """Validate: All 30 trials are vowel."""
+        """Validate: All 5 trials are vowel."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
@@ -750,7 +766,7 @@ class TestTrialGeneratorValidation:
     def test_go_segments_in_range(self):
         """Validate: Each trial has 3-7 GO segments."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
@@ -760,9 +776,9 @@ class TestTrialGeneratorValidation:
                 )
 
     def test_go_durations_in_range(self):
-        """Validate: Each GO segment is 3-7 seconds and total GO < 60."""
+        """Validate: Each GO segment is 3-7 seconds and total GO < 240."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
-        trials = generate_trials(num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng)
+        trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
@@ -772,20 +788,20 @@ class TestTrialGeneratorValidation:
                         f"expected 3-7s, got {dur}"
                     )
                 total_go = sum(trial.go_segment_durations)
-                assert total_go < 60.0, (
-                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 60s"
+                assert total_go < 240.0, (
+                    f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 240s"
                 )
 
     def test_reproducibility_with_seed(self):
         """Validate: Same seed produces same sequence."""
         rng1 = get_rng(ExperimentConfig(random_seed="12345"))
         trials1 = generate_trials(
-            num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng1
+            num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng1
         )
 
         rng2 = get_rng(ExperimentConfig(random_seed="12345"))
         trials2 = generate_trials(
-            num_sets=5, trials_per_set=6, num_stop_trials_ratio=0.0, rng=rng2
+            num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng2
         )
 
         # Compare all trial configs
