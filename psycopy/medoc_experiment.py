@@ -126,16 +126,12 @@ class MedocExperiment:
         else:
             self.logger.info("Speech mode: no structured trials.")
 
-    def _display_state(self, state: TaskState, stimulus_text: str, progress: float | None = None) -> None:
+    def _display_state(self, state: TaskState, stimulus_text: str) -> None:
         self.ui.apply_state(state)
         self.ui.sentence_text.text = stimulus_text
         self.ui.sentence_text.draw()
         self.ui.state_background.draw()
         self.ui.state_indicator.draw()
-        if progress is not None:
-            self.ui.show_progress(progress)
-            self.ui.progress_bar_bg.draw()
-            self.ui.progress_bar.draw()
         self.ui.win.flip()
 
     def run_trial(
@@ -221,7 +217,6 @@ class MedocExperiment:
             for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
                 # --- Poll before STOP cue if interval hit -------------------
                 elapsed = time.monotonic() - trigger_timestamp
-                progress = min(elapsed / TRIAL_DURATION_SEC, 1.0)
                 if client is not None and elapsed >= next_poll_at:
                     status = self._poll_and_log(
                         client,
@@ -253,12 +248,11 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.STOP, VOWEL_TEXT, progress=progress)
+                self._display_state(TaskState.STOP, VOWEL_TEXT)
                 self.ui.wait(stop_duration)
 
                 # --- Poll during STOP if interval hit ----------------------
                 elapsed = time.monotonic() - trigger_timestamp
-                progress = min(elapsed / TRIAL_DURATION_SEC, 1.0)
                 if client is not None and elapsed >= next_poll_at:
                     status = self._poll_and_log(
                         client,
@@ -290,7 +284,7 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.GO, VOWEL_TEXT, progress=progress)
+                self._display_state(TaskState.GO, VOWEL_TEXT)
                 self.ui.wait(go_duration)
 
                 self.logger.debug(
@@ -304,7 +298,6 @@ class MedocExperiment:
 
             # Final STOP cue
             final_stop_ts = time.monotonic()
-            progress = min((final_stop_ts - trigger_timestamp) / TRIAL_DURATION_SEC, 1.0)
             self.event_logger.log(
                 event_type="stop_cue",
                 trial_instance_id=trial_instance_id,
@@ -317,14 +310,12 @@ class MedocExperiment:
                     "temperature_celsius": current_temperature,
                 },
             )
-            self._display_state(TaskState.STOP, VOWEL_TEXT, progress=progress)
+            self._display_state(TaskState.STOP, VOWEL_TEXT)
 
             elapsed = time.monotonic() - trigger_timestamp
             remaining = TRIAL_DURATION_SEC - elapsed
             if remaining > 0:
                 self.ui.wait(remaining)
-
-            self.ui.hide_progress()
 
             # Final poll at end of trial
             if client is not None:
@@ -684,7 +675,7 @@ class MedocExperiment:
 
             # VOWEL MODE (NORMAL / PRACTICE)
             self.ui.show_instructions(
-                go_segmentation_enabled=False, medoc_enabled=self.medoc_client is not None
+                go_segmentation_enabled=True, medoc_enabled=self.medoc_client is not None
             )
 
             for block_num, block_trials in enumerate(self.trials):
