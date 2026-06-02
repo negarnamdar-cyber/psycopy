@@ -370,8 +370,8 @@ class TestFullExperimentOutput:
             exp = MedocExperiment(config)
             for block in exp.trials:
                 for trial in block:
-                    assert 3 <= trial.num_go_segments <= 7, (
-                        f"Expected 3-7 GO segments, got {trial.num_go_segments}"
+                    assert 12 <= trial.num_go_segments <= 28, (
+                        f"Expected 12-28 GO segments, got {trial.num_go_segments}"
                     )
 
     def test_e2e_go_segment_durations(self,
@@ -770,8 +770,8 @@ class TestTrialGeneratorValidation:
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
-                assert 3 <= trial.num_go_segments <= 7, (
-                    f"Block {block_idx} Trial {trial_idx}: expected 3-7 GO segments, "
+                assert 12 <= trial.num_go_segments <= 28, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 12-28 GO segments, "
                     f"got {trial.num_go_segments}"
                 )
 

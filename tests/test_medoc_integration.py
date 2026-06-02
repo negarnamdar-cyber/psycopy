@@ -366,8 +366,8 @@ class TestTrialGenerator:
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
-                assert 3 <= trial.num_go_segments <= 7, (
-                    f"Block {block_idx} Trial {trial_idx}: expected 3-7 GO segments, "
+                assert 12 <= trial.num_go_segments <= 28, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 12-28 GO segments, "
                     f"got {trial.num_go_segments}"
                 )
 
