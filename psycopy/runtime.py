@@ -299,17 +299,19 @@ class PsychoPyUI:
         self.wait_for_space()
 
     def show_speech_instructions(self, medoc_enabled: bool = False) -> None:
-        """Show free speech interview instructions."""
+        """Show structured speech Q&A instructions."""
         instructions = (
-            "SPEECH INTERVIEW\n\n"
-            "Speak naturally with the researcher while SPEAK is shown on screen.\n\n"
+            "SPEECH Q&A TASK\n\n"
+            "A question will appear on screen.\n"
+            "When the screen turns GREEN, you have 20 seconds to answer.\n"
+            "Stop speaking when the screen turns RED.\n\n"
         )
         if medoc_enabled:
             instructions += (
-                "Thermal stimulation will be applied during the interview.\n"
+                "Thermal stimulation will be applied during the task.\n"
                 "You may experience changes in pain/discomfort levels.\n\n"
             )
-        instructions += "The researcher will stop the interview when finished.\n\nPress SPACE to begin."
+        instructions += "Press SPACE to begin."
 
         self.instruction_text.text = instructions
         self.instruction_text.draw()
@@ -412,34 +414,82 @@ class PsychoPyUI:
         self.win.flip()
         self.wait_for_space()
 
-    def show_speech_screen(self) -> None:
-        """Show the speech interview screen. Displays 'SPEAK' continuously.
+    def show_question(self, question: str) -> None:
+        """Display a question on screen before the speaking period."""
+        self.sentence_text.text = question
+        self.sentence_text.pos = (0, 0.1)
+        self.sentence_text.height = 0.06
+        self.sentence_text.draw()
+        self.help_text.text = "Get ready to answer..."
+        self.help_text.draw()
+        self.win.flip()
 
-        Researchers ask questions while this screen is shown.
-        Only Q + shutdown code (12345) can exit.
+    def show_speech_screen(self, countdown_sec: float | None = None) -> None:
+        """Show the speech screen with optional countdown timer.
+
+        Args:
+            countdown_sec: If provided, shows a countdown timer on screen.
         """
-        self.sentence_text.text = "SPEAK"
-        self.sentence_text.pos = (0, 0)
-        self.sentence_text.height = 0.12
+        if countdown_sec is not None:
+            minutes = int(countdown_sec) // 60
+            seconds = int(countdown_sec) % 60
+            self.sentence_text.text = f"SPEAK\n\n{minutes:01d}:{seconds:02d}"
+        else:
+            self.sentence_text.text = "SPEAK"
+        self.sentence_text.pos = (0, 0.05)
+        self.sentence_text.height = 0.08
         self.sentence_text.draw()
         self.help_text.text = "Press Q + 12345 to stop"
         self.help_text.draw()
         self.win.flip()
 
-    def run_speech_loop(self) -> None:
-        """Run the free speech interview screen until researcher enters shutdown code.
+    def run_question_segment(
+        self, question: str, speak_duration: float = 20.0
+    ) -> tuple[bool, float]:
+        """Run a single question-answer segment: show question, then SPEAK for duration.
 
-        Polls continuously for the shutdown code (Q + 12345).
-        ESC does not stop the experiment — only the coded shutdown works.
+        Args:
+            question: The question text to display.
+            speak_duration: Number of seconds the participant has to answer.
+
+        Returns:
+            (completed, actual_duration_ms): completed is False if spacebar
+            was pressed early (or shutdown requested), True otherwise.
         """
-        self.event.clearEvents(eventType="keyboard")
-        self.show_speech_screen()
-        while True:
-            # Check for Q to start shutdown code entry
-            keys = self.event.getKeys(keyList=["q"])
-            if keys and self._confirm_shutdown_code():
+        # Show question for 3 seconds
+        self.show_question(question)
+        self.wait(3.0)
+
+        # Show SPEAK with countdown for speak_duration
+        self.apply_state(TaskState.GO)
+        self.sentence_text.text = f"SPEAK\n\n{int(speak_duration):02d}"
+        self.sentence_text.pos = (0, 0.05)
+        self.sentence_text.height = 0.08
+        self.sentence_text.draw()
+        self.state_background.draw()
+        self.state_indicator.draw()
+        before = self.exp_clock.getTime()
+        self.win.flip()
+        after = self.exp_clock.getTime()
+        drift_ms = (after - before) * 1000.0
+
+        segment_start = self.exp_clock.getTime()
+        completed = True
+        last_displayed_second: int | None = None
+        while (self.exp_clock.getTime() - segment_start) < speak_duration:
+            self._check_escape()
+            if self.check_spacebar():
+                completed = False
                 break
+            remaining = speak_duration - (self.exp_clock.getTime() - segment_start)
+            displayed_second = int(remaining)
+            if displayed_second != last_displayed_second:
+                self.show_speech_screen(countdown_sec=remaining)
+                last_displayed_second = displayed_second
             self.core.wait(0.1)
+
+        actual_duration = (self.exp_clock.getTime() - segment_start) * 1000.0
+        return completed, actual_duration
 
     def show_rt_instructions(self) -> None:
         """Show reaction time task instructions with improved formatting."""

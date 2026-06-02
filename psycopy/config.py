@@ -45,6 +45,15 @@ class MedocConfig:
         _validate_medoc_config(self.medoc_ip, self.medoc_port, self.medoc_timeout)
 
 
+DEFAULT_SPEECH_QUESTIONS = [
+    "How's your pain today?",
+    "Tell me about your favorite hobby.",
+    "Describe what you had for breakfast.",
+    "What are your plans for the weekend?",
+    "Tell me about a place you'd like to visit.",
+]
+
+
 @dataclass(frozen=True, slots=True)
 class ExperimentConfig:
     participant_id: str = "001"
@@ -60,6 +69,7 @@ class ExperimentConfig:
     vad_target_rate: int = 16000  # Target sample rate for VAD processing
     mode: ExperimentMode = ExperimentMode.NORMAL  # Experiment execution mode
     medoc_config: Optional[MedocConfig] = None
+    speech_questions: tuple[str, ...] = tuple(DEFAULT_SPEECH_QUESTIONS)
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -85,6 +95,9 @@ class ExperimentConfig:
         # Convert medoc_config dict back to MedocConfig if present
         if data.get("medoc_config") is not None and isinstance(data["medoc_config"], dict):
             data["medoc_config"] = MedocConfig(**data["medoc_config"])
+        # Convert speech_questions list back to tuple if present
+        if "speech_questions" in data and isinstance(data["speech_questions"], list):
+            data["speech_questions"] = tuple(data["speech_questions"])
         cfg = cls(**data)
         validate_config(cfg)
         return cfg

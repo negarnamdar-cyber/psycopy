@@ -9,9 +9,7 @@ webrtcvad-wheels>=2.0.10       # VAD on vowel trials
 opensmile>=2.5.0             # ComParE_2016 acoustic features
 pandas>=2.0.0                # openSMILE DataFrame output
 
-# Future / placeholder dependencies
-# torch>=2.0.0                 # speaker diarization (not yet wired)
-# torchaudio>=2.0.0            # speaker diarization (not yet wired)
+# Future dependencies (not yet wired)
 
 # Development (optional)
 # pytest>=7.0.0

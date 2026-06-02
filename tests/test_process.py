@@ -248,7 +248,6 @@ class TestProcessSession:
         assert meta["status"] == "completed"
 
         assert (tmp_speech_session / "speech_features_ComParE.csv").exists()
-        assert (tmp_speech_session / "speech_diarization.csv").exists()
         assert (tmp_speech_session / "summary.csv").exists()
 
     def test_process_session_skips_already_processed(self, tmp_vowel_session: Path):

@@ -1,4 +1,4 @@
-"""Medoc experiment controller for thermal stimulation with vowel production.
+"""Medoc experiment controller for thermal stimulation with speech production.
 
 Integrates Medoc thermode device communication with vowel speech
 experiment infrastructure. Manages trial randomization, device communication,
@@ -13,11 +13,12 @@ Two experiment modes are supported:
    - Total experiment time: ~25 minutes
 
 2. Speech mode (SPEECH):
-   - Free speech interview with thermal stimulation
-   - Repeating cycles of 4 minutes speaking + 1 minute break
-   - Continues until the researcher triggers graceful shutdown (Q + 12345)
-   - Continuous unified Medoc program (experiment 192)
-   - ESC is disabled — only coded shutdown works
+   - Structured Q&A with thermal stimulation
+   - One block per question; each trial shows the question, then 20 seconds
+     to answer while the screen shows GO / SPEAK
+   - Questions are configurable via ``ExperimentConfig.speech_questions``
+   - 1-minute break between blocks
+   - Each question gets its own audio recording
 """
 
 from __future__ import annotations
@@ -103,7 +104,12 @@ class MedocExperiment:
         )
 
         if config.mode == ExperimentMode.SPEECH:
-            self.trials = []
+            from psycopy.trial_generator import generate_speech_trials
+            self.trials = generate_speech_trials(
+                questions=list(config.speech_questions),
+                num_blocks=num_blocks,
+                rng=self.rng,
+            )
         else:
             self.trials = generate_trials(
                 num_sets=num_blocks,
@@ -118,10 +124,12 @@ class MedocExperiment:
 
         self.event_logger.set_start_time()
         if self.trials:
+            total_trials = sum(len(block) for block in self.trials)
             self.logger.info(
-                "Generated %d blocks with %d trials each",
+                "Generated %d blocks with %d trials each (total %d)",
                 len(self.trials),
                 len(self.trials[0]) if self.trials else 0,
+                total_trials,
             )
         else:
             self.logger.info("Speech mode: no structured trials.")
@@ -198,11 +206,12 @@ class MedocExperiment:
             audio_started = True
             self.currently_recording = True
 
+            audio_type = "speech" if trial_config.task_type == "speech" else "vowel"
             self.event_logger.log(
                 event_type="recording_start",
                 trial_instance_id=trial_instance_id,
                 block=f"block{set_num}",
-                event_data={"audio_type": "vowel"},
+                event_data={"audio_type": audio_type},
             )
 
             total_go_time = sum(trial_config.go_segment_durations)
@@ -248,7 +257,12 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.STOP, VOWEL_TEXT)
+                stop_text = (
+                    trial_config.segment_texts[seg_idx]
+                    if trial_config.task_type == "speech" and seg_idx < len(trial_config.segment_texts)
+                    else VOWEL_TEXT
+                )
+                self._display_state(TaskState.STOP, stop_text)
                 self.ui.wait(stop_duration)
 
                 # --- Poll during STOP if interval hit ----------------------
@@ -284,7 +298,12 @@ class MedocExperiment:
                         "temperature_celsius": current_temperature,
                     },
                 )
-                self._display_state(TaskState.GO, VOWEL_TEXT)
+                go_text = (
+                    trial_config.segment_texts[seg_idx]
+                    if trial_config.task_type == "speech" and seg_idx < len(trial_config.segment_texts)
+                    else VOWEL_TEXT
+                )
+                self._display_state(TaskState.GO, go_text)
                 self.ui.wait(go_duration)
 
                 self.logger.debug(
@@ -310,7 +329,12 @@ class MedocExperiment:
                     "temperature_celsius": current_temperature,
                 },
             )
-            self._display_state(TaskState.STOP, VOWEL_TEXT)
+            final_text = (
+                trial_config.segment_texts[-1]
+                if trial_config.task_type == "speech" and trial_config.segment_texts
+                else VOWEL_TEXT
+            )
+            self._display_state(TaskState.STOP, final_text)
 
             elapsed = time.monotonic() - trigger_timestamp
             remaining = TRIAL_DURATION_SEC - elapsed
@@ -501,84 +525,6 @@ class MedocExperiment:
             self.logger.warning("Medoc poll failed: %s", exc)
             return None
 
-    def _run_speech_pain_cycle(
-        self,
-        cycle_idx: int,
-        client: MedocClient | None,
-    ) -> None:
-        self.logger.info("Speech mode: starting pain cycle %d", cycle_idx)
-        self.event_logger.log(
-            event_type="pain_cycle_start",
-            trial_instance_id="",
-            block="speech",
-            event_data={"cycle_idx": cycle_idx},
-        )
-
-        trigger_timestamp = time.monotonic()
-        trial_instance_id = f"speech_cycle_{cycle_idx:03d}"
-
-        if client is not None:
-            self.medoc_logger.log_trigger(
-                trial_instance_id=trial_instance_id,
-                set_number=cycle_idx,
-                trial_in_set=0,
-                timestamp=trigger_timestamp,
-            )
-
-        self._show_speech_screen_with_timer(240.0, cycle_idx, client, trial_instance_id)
-
-        self.logger.info("Speech mode: 1-minute pause after cycle %d", cycle_idx)
-        self._show_break_screen(60.0)
-
-        self.event_logger.log(
-            event_type="pain_cycle_end",
-            trial_instance_id="",
-            block="speech",
-            event_data={"cycle_idx": cycle_idx},
-        )
-
-    def _show_speech_screen_with_timer(
-        self,
-        duration: float,
-        cycle_idx: int,
-        client: MedocClient | None,
-        trial_instance_id: str,
-    ) -> None:
-        start_time = time.monotonic()
-        next_poll_at = 30.0
-        last_displayed_second: int | None = None
-        while True:
-            elapsed = time.monotonic() - start_time
-            remaining = duration - elapsed
-            if remaining <= 0:
-                break
-
-            if client is not None and elapsed >= next_poll_at:
-                self._poll_and_log(
-                    client,
-                    trial_instance_id,
-                    cycle_idx,
-                    0,
-                    time.monotonic(),
-                )
-                next_poll_at += 30.0
-
-            displayed_second = int(remaining)
-            if displayed_second != last_displayed_second:
-                minutes = displayed_second // 60
-                seconds = displayed_second % 60
-                self.ui.sentence_text.text = f"SPEAK\n\n{minutes:01d}:{seconds:02d}"
-                self.ui.sentence_text.pos = (0, 0.05)
-                self.ui.sentence_text.height = 0.08
-                self.ui.sentence_text.draw()
-                self.ui.help_text.text = "Press Q + 12345 to stop"
-                self.ui.help_text.draw()
-                self.ui.win.flip()
-                last_displayed_second = displayed_second
-
-            self.ui._check_escape()
-            self.ui.core.wait(0.1)
-
     def save_all_loggers(self) -> None:
         self.trial_logger.save()
         self.medoc_logger.save()
@@ -597,77 +543,49 @@ class MedocExperiment:
                 },
             )
 
-            # SPEECH MODE
+            # SPEECH MODE (structured Q&A)
             if self.config.mode == ExperimentMode.SPEECH:
                 self.logger.info("Running in SPEECH mode")
                 self.ui.show_speech_instructions(medoc_enabled=self.medoc_client is not None)
 
-                speech_audio_path = (
-                    self.session_paths.audio_dir
-                    / f"sub-{self.config.participant_id}_speech.wav"
-                )
-                self.audio.start(speech_audio_path)
-                self.currently_recording = True
-                self.event_logger.log(
-                    event_type="recording_start",
-                    trial_instance_id="",
-                    block="speech",
-                    event_data={"audio_type": "speech"},
-                )
-
-                cycle_idx = 0
-                while True:
+                for block_num, block_trials in enumerate(self.trials):
                     speech_client = self.medoc_client
-
                     if speech_client is not None:
                         try:
                             speech_client.connect()
                             speech_client.send_unified_program()
                             self.logger.info(
-                                "Medoc unified program 11000000 started for speech cycle %d",
-                                cycle_idx,
+                                "Medoc unified program 11000000 started for block %d",
+                                block_num,
                             )
                         except Exception as exc:
                             self.logger.warning(
-                                "Failed to start unified Medoc program for cycle %d: %s",
-                                cycle_idx,
+                                "Failed to start unified Medoc program for block %d: %s",
+                                block_num,
                                 exc,
                             )
 
-                    try:
-                        self._run_speech_pain_cycle(cycle_idx, speech_client)
-                    except UserAbort:
-                        self.logger.info(
-                            "Speech mode: graceful shutdown requested after cycle %d", cycle_idx
-                        )
-                        break
-                    finally:
-                        if speech_client is not None:
-                            try:
-                                speech_client.stop_unified_program()
-                                speech_client.disconnect()
-                            except Exception as exc:
-                                self.logger.warning("Error disconnecting Medoc: %s", exc)
+                    self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
+                    self.run_set(block_num, block_trials, client=speech_client)
 
-                    cycle_idx += 1
+                    if speech_client is not None:
+                        try:
+                            speech_client.stop_unified_program()
+                            speech_client.disconnect()
+                            self.logger.info("Medoc disconnected before break")
+                        except Exception as exc:
+                            self.logger.warning("Error disconnecting Medoc: %s", exc)
 
-                if self.currently_recording:
-                    try:
-                        self.audio.stop()
-                        self.currently_recording = False
-                        self.event_logger.log(
-                            event_type="recording_end",
-                            trial_instance_id="",
-                            block="speech",
-                        )
-                    except Exception as exc:
-                        self.logger.warning("Error stopping audio: %s", exc)
+                    if block_num < len(self.trials) - 1:
+                        self.logger.info("Starting 1-minute break after block %d", block_num + 1)
+                        self._show_break_screen(BLOCK_BREAK_SEC)
 
+                total_trials = sum(len(block) for block in self.trials)
                 self.event_logger.log(
                     event_type="experiment_complete",
                     trial_instance_id="",
                     block="",
-                    event_data={"total_cycles": cycle_idx + 1, "mode": "speech"},
+                    event_data={"total_trials": total_trials, "mode": "speech"},
                 )
                 self.ui.show_completion()
                 self.save_all_loggers()

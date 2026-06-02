@@ -18,15 +18,18 @@ class TrialConfig:
     """Configuration for a single trial.
 
     Attributes:
-        task_type: Always "vowel"
-        num_go_segments: Number of GO segments within the 240s trial (12-28)
-        go_segment_durations: Tuple of GO segment durations (seconds), each
-            between 3 and 7. Sum must be < 240 so STOP periods can fill the rest.
+        task_type: "vowel" or "speech"
+        num_go_segments: Number of GO segments within the 240s trial
+        go_segment_durations: Tuple of GO segment durations (seconds).
+            Sum must be < 240 so STOP periods can fill the rest.
+        segment_texts: Optional tuple of stimulus text for each GO segment.
+            Used by speech mode to show questions during GO periods.
     """
 
     task_type: str
     num_go_segments: int
     go_segment_durations: tuple[float, ...]
+    segment_texts: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, str | int | tuple[float, ...]]:
         return asdict(self)
@@ -38,10 +41,11 @@ class TrialConfig:
             self.task_type == other.task_type
             and self.num_go_segments == other.num_go_segments
             and self.go_segment_durations == other.go_segment_durations
+            and self.segment_texts == other.segment_texts
         )
 
     def __hash__(self) -> int:
-        return hash((self.task_type, self.num_go_segments, self.go_segment_durations))
+        return hash((self.task_type, self.num_go_segments, self.go_segment_durations, self.segment_texts))
 
 
 def _generate_go_durations(
@@ -129,6 +133,63 @@ def generate_trials(
             )
 
         rng.shuffle(block)
+        all_blocks.append(block)
+
+    return all_blocks
+
+
+def generate_speech_trials(
+    questions: list[str],
+    num_blocks: int,
+    rng: random.Random,
+    go_duration: float = 20.0,
+) -> list[list[TrialConfig]]:
+    """Generate speech Q&A trial schedule.
+
+    Each block is a 240-second trial with one 20-second GO segment per question.
+    STOP periods fill the remaining time evenly. Questions are shuffled within
+    each block and recycled if fewer questions than GO segments are provided.
+
+    Args:
+        questions: List of question strings. Easily swappable by the caller.
+        num_blocks: Number of blocks (default 5, matching vowel mode).
+        rng: Seeded Random instance for reproducibility.
+        go_duration: Duration of each answer period in seconds (default 20).
+
+    Returns:
+        List of blocks, each block is a list of one TrialConfig.
+    """
+    if not questions:
+        questions = ["Please speak freely."]
+
+    go_duration = round(go_duration, 2)
+    num_go = len(questions)
+    total_go = num_go * go_duration
+    # Ensure at least ~1 s per STOP period
+    reserved_for_stop = float(num_go + 1)
+    if total_go + reserved_for_stop > 240.0:
+        # Too many questions; fit as many as possible
+        num_go = max(1, int((240.0 - reserved_for_stop) // go_duration))
+        total_go = num_go * go_duration
+
+    go_durs = tuple(go_duration for _ in range(num_go))
+
+    all_blocks: list[list[TrialConfig]] = []
+    for _ in range(num_blocks):
+        block_questions = list(questions[:num_go])
+        rng.shuffle(block_questions)
+        # Pad with recycled questions if needed
+        while len(block_questions) < num_go:
+            block_questions.extend(questions[: num_go - len(block_questions)])
+
+        block = [
+            TrialConfig(
+                task_type="speech",
+                num_go_segments=num_go,
+                go_segment_durations=go_durs,
+                segment_texts=tuple(block_questions),
+            )
+        ]
         all_blocks.append(block)
 
     return all_blocks

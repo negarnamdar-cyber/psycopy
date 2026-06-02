@@ -6,13 +6,11 @@ runs all post-hoc analyses:
     1. VAD (WebRTC) on vowel trials  — speech_start/end + stop-cue latencies
     2. openSMILE ComParE_2016 on vowel trials  — acoustic features
     3. openSMILE ComParE_2016 on speech recordings  — acoustic features
-    4. Speaker diarization placeholder on speech recordings  — turn-taking stats
 
 Output files per session:
     - vad_events.csv
     - vowel_features_ComParE.csv
     - speech_features_ComParE.csv
-    - speech_diarization.csv
     - summary.csv
     - processed.json   (status tracker)
 
@@ -870,62 +868,7 @@ def extract_speech_features(session: SessionInfo) -> dict[str, Any]:
 
 
 # =============================================================================
-# 3. Speaker diarization (speech only) — placeholder
-# =============================================================================
-
-
-def process_speech_diarization(session: SessionInfo) -> dict[str, Any]:
-    """Placeholder for speaker diarization on free-speech recordings.
-
-    Currently produces a placeholder CSV with one row per speech recording
-    so the pipeline structure is ready. Future integration can fill in actual
-    turn-taking statistics (speech / non-speech ratio, speaker switch rate, etc.).
-    """
-    rows: list[dict[str, Any]] = []
-    for rec in session.recordings:
-        if rec.audio_type != "speech":
-            continue
-        if not rec.wav_path.exists():
-            continue
-
-        # Placeholder metrics
-        audio, rate = read_wav(rec.wav_path)
-        duration = len(audio) / float(rate)
-        # Simple energy-based voice activity as a placeholder
-        energy = audio ** 2
-        threshold = energy.mean() * 0.1
-        voiced_frames = (energy > threshold).sum()
-        voiced_ratio = voiced_frames / len(audio) if len(audio) > 0 else 0.0
-
-        temp_str = _get_temp_for_trial(
-            session.temperature_data, rec.trial_instance_id or rec.wav_path.stem
-        )
-
-        rows.append(
-            {
-                "trial_instance_id": rec.trial_instance_id or rec.wav_path.stem,
-                "temperature_celsius": temp_str,
-                "block": rec.block or "speech",
-                "audio_filename": rec.wav_path.name,
-                "duration_sec": round(duration, 3),
-                "voiced_ratio": round(float(voiced_ratio), 4),
-                "speaker_turns": "",  # placeholder for future diarization
-                "avg_turn_duration_sec": "",
-                "primary_speaker_ratio": "",
-                "diarization_model": "placeholder",
-            }
-        )
-
-    out_csv = session.output_dir / "speech_diarization.csv"
-    if rows:
-        _write_csv(out_csv, rows)
-        logger.info("Wrote %d speech diarization placeholder rows to %s", len(rows), out_csv)
-
-    return {"status": "completed", "processed_recordings": len(rows)}
-
-
-# =============================================================================
-# 4. Summary CSV
+# 3. Summary CSV
 # =============================================================================
 
 
@@ -942,7 +885,6 @@ def write_summary(session: SessionInfo, stats: dict[str, Any]) -> None:
         "vad_events": stats.get("vad", {}).get("events", 0),
         "vowel_feature_rows": stats.get("vowel_features", {}).get("rows", 0),
         "speech_feature_rows": stats.get("speech_features", {}).get("rows", 0),
-        "diarization_recordings": stats.get("diarization", {}).get("processed_recordings", 0),
     }
     _write_csv(session.output_dir / "summary.csv", [summary])
 
@@ -991,13 +933,11 @@ def process_session(session_dir: Path, force: bool = False) -> dict[str, Any]:
     vad_stats = process_vad_for_session(session)
     vowel_stats = extract_vowel_features(session)
     speech_stats = extract_speech_features(session)
-    diarization_stats = process_speech_diarization(session)
 
     stats = {
         "vad": vad_stats,
         "vowel_features": vowel_stats,
         "speech_features": speech_stats,
-        "diarization": diarization_stats,
     }
     write_summary(session, stats)
 
