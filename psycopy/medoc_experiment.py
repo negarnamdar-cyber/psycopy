@@ -14,11 +14,14 @@ Two experiment modes are supported:
 
 2. Speech mode (SPEECH):
    - Structured Q&A with thermal stimulation
-   - One block per question; each trial shows the question, then 20 seconds
-     to answer while the screen shows GO / SPEAK
-   - Questions are configurable via ``ExperimentConfig.speech_questions``
+   - Always 5 blocks, each a 4-minute trial
+   - Each block contains ~8 questions (40 total is the sweet spot)
+   - Per question: 4--7 s READ (STOP, question shown) +
+     15--25 s ANSWER (GO, screen turns green)
+   - Remaining time in the block is a final STOP (rest)
    - 1-minute break between blocks
-   - Each question gets its own audio recording
+   - Questions are configurable via ``ExperimentConfig.speech_questions``
+   - Extras beyond 40 are truncated (no recycling)
 """
 
 from __future__ import annotations
@@ -214,9 +217,15 @@ class MedocExperiment:
                 event_data={"audio_type": audio_type},
             )
 
-            total_go_time = sum(trial_config.go_segment_durations)
-            num_stop_periods = trial_config.num_go_segments + 1
-            stop_duration = (TRIAL_DURATION_SEC - total_go_time) / num_stop_periods
+            # Determine STOP durations.
+            # Speech mode uses explicit read durations; vowel mode auto-calculates.
+            if trial_config.stop_segment_durations:
+                stop_durations = list(trial_config.stop_segment_durations)
+            else:
+                total_go_time = sum(trial_config.go_segment_durations)
+                num_stop_periods = trial_config.num_go_segments + 1
+                even_stop = (TRIAL_DURATION_SEC - total_go_time) / num_stop_periods
+                stop_durations = [even_stop] * num_stop_periods
 
             # Poll Medoc every 5 seconds during trials for higher-resolution
             # temperature data that can be matched to individual GO/STOP segments.
@@ -245,6 +254,7 @@ class MedocExperiment:
 
                 # Log STOP cue with most recent temperature
                 stop_cue_ts = time.monotonic()
+                stop_duration = stop_durations[seg_idx]
                 self.event_logger.log(
                     event_type="stop_cue",
                     trial_instance_id=trial_instance_id,
@@ -315,8 +325,10 @@ class MedocExperiment:
                     current_temperature,
                 )
 
-            # Final STOP cue
+            # Final STOP cue (rest period — whatever time is left in the 4-minute block)
             final_stop_ts = time.monotonic()
+            elapsed = time.monotonic() - trigger_timestamp
+            final_stop = max(0.0, TRIAL_DURATION_SEC - elapsed)
             self.event_logger.log(
                 event_type="stop_cue",
                 trial_instance_id=trial_instance_id,
@@ -324,7 +336,7 @@ class MedocExperiment:
                 event_data={
                     "segment_index": trial_config.num_go_segments,
                     "cue_type": "stop",
-                    "cue_duration_sec": round(stop_duration, 3),
+                    "cue_duration_sec": round(final_stop, 3),
                     "trial_elapsed_sec": round(final_stop_ts - trigger_timestamp, 3),
                     "temperature_celsius": current_temperature,
                 },
@@ -336,10 +348,8 @@ class MedocExperiment:
             )
             self._display_state(TaskState.STOP, final_text)
 
-            elapsed = time.monotonic() - trigger_timestamp
-            remaining = TRIAL_DURATION_SEC - elapsed
-            if remaining > 0:
-                self.ui.wait(remaining)
+            if final_stop > 0:
+                self.ui.wait(final_stop)
 
             # Final poll at end of trial
             if client is not None:

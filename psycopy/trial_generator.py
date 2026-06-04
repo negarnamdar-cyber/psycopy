@@ -24,14 +24,19 @@ class TrialConfig:
             Sum must be < 240 so STOP periods can fill the rest.
         segment_texts: Optional tuple of stimulus text for each GO segment.
             Used by speech mode to show questions during GO periods.
+        stop_segment_durations: Optional tuple of explicit STOP segment
+            durations (seconds).  Empty means "calculate automatically"
+            (used by vowel mode).  When provided, the final STOP fills
+            the remainder of the 240-second trial.
     """
 
     task_type: str
     num_go_segments: int
     go_segment_durations: tuple[float, ...]
     segment_texts: tuple[str, ...] = ()
+    stop_segment_durations: tuple[float, ...] = ()
 
-    def to_dict(self) -> dict[str, str | int | tuple[float, ...]]:
+    def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     def __eq__(self, other: object) -> bool:
@@ -42,10 +47,19 @@ class TrialConfig:
             and self.num_go_segments == other.num_go_segments
             and self.go_segment_durations == other.go_segment_durations
             and self.segment_texts == other.segment_texts
+            and self.stop_segment_durations == other.stop_segment_durations
         )
 
     def __hash__(self) -> int:
-        return hash((self.task_type, self.num_go_segments, self.go_segment_durations, self.segment_texts))
+        return hash(
+            (
+                self.task_type,
+                self.num_go_segments,
+                self.go_segment_durations,
+                self.segment_texts,
+                self.stop_segment_durations,
+            )
+        )
 
 
 def _generate_go_durations(
@@ -140,21 +154,33 @@ def generate_trials(
 
 def generate_speech_trials(
     questions: list[str],
-    num_blocks: int,
     rng: random.Random,
-    go_duration: float = 20.0,
+    num_blocks: int = 5,
+    min_read: float = 4.0,
+    max_read: float = 7.0,
+    min_answer: float = 15.0,
+    max_answer: float = 25.0,
 ) -> list[list[TrialConfig]]:
     """Generate speech Q&A trial schedule.
 
-    Each block is a 240-second trial with one 20-second GO segment per question.
-    STOP periods fill the remaining time evenly. Questions are shuffled within
-    each block and recycled if fewer questions than GO segments are provided.
+    Each block is a 240-second trial made of:
+
+        READ (STOP, 4--7 s)  ->  ANSWER (GO, 15--25 s)  ->  repeat ...  ->  REST (STOP, remainder)
+
+    The session is always exactly ``num_blocks`` blocks (default 5).  If you
+    supply more questions than fit, extras are truncated (no recycling).  If
+    you supply fewer, they are spread evenly across the 5 blocks.
+
+    With the default bounds, **~40 questions is the sweet spot** (8 per block).
 
     Args:
-        questions: List of question strings. Easily swappable by the caller.
-        num_blocks: Number of blocks (default 5, matching vowel mode).
+        questions: List of question strings.  Easily swappable by the caller.
         rng: Seeded Random instance for reproducibility.
-        go_duration: Duration of each answer period in seconds (default 20).
+        num_blocks: Number of blocks (default 5 for a ~25 min session).
+        min_read: Minimum question-read time in seconds (default 4).
+        max_read: Maximum question-read time in seconds (default 7).
+        min_answer: Minimum answer time in seconds (default 15).
+        max_answer: Maximum answer time in seconds (default 25).
 
     Returns:
         List of blocks, each block is a list of one TrialConfig.
@@ -162,34 +188,99 @@ def generate_speech_trials(
     if not questions:
         questions = ["Please speak freely."]
 
-    go_duration = round(go_duration, 2)
-    num_go = len(questions)
-    total_go = num_go * go_duration
-    # Ensure at least ~1 s per STOP period
-    reserved_for_stop = float(num_go + 1)
-    if total_go + reserved_for_stop > 240.0:
-        # Too many questions; fit as many as possible
-        num_go = max(1, int((240.0 - reserved_for_stop) // go_duration))
-        total_go = num_go * go_duration
+    # Target: ~40 questions / 5 blocks = 8 per block.
+    # With defaults (read 4-7 s, answer 15-25 s), 8 questions comfortably fit:
+    #   8 * 5.5 + 8 * 20 = 204 s  =>  36 s left for final STOP.
+    max_per_block = 8
 
-    go_durs = tuple(go_duration for _ in range(num_go))
+    # Always produce exactly ``num_blocks`` blocks (default 5)
+    total_q = len(questions)
+    qpb = total_q // num_blocks  # floor
+    remainder = total_q % num_blocks
+
+    # First ``remainder`` blocks get one extra question
+    block_counts = [
+        min(max_per_block, qpb + (1 if i < remainder else 0))
+        for i in range(num_blocks)
+    ]
+    # Truncate if total would exceed available questions
+    used = 0
+    final_counts: list[int] = []
+    for c in block_counts:
+        actual = min(c, total_q - used)
+        if actual <= 0:
+            break
+        final_counts.append(actual)
+        used += actual
+
+    # If somehow we ended up with fewer blocks (e.g. < 5 questions),
+    # pad with single-question blocks so we always hit num_blocks
+    while len(final_counts) < num_blocks and used < total_q:
+        final_counts.append(1)
+        used += 1
+    while len(final_counts) < num_blocks:
+        final_counts.append(1)  # will recycle the last question as fallback
+
+    # Shuffle question order once, then slice into blocks
+    shuffled = list(questions)
+    rng.shuffle(shuffled)
+
+    def _fit_durations(n: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """Generate n read durations and n answer durations that fit in 239 s.
+
+        Returns (read_durs, answer_durs).  A 1-second final STOP is reserved.
+        """
+        reads = [round(rng.uniform(min_read, max_read), 2) for _ in range(n)]
+        total_read = sum(reads)
+        budget = 239.0 - total_read  # seconds left for answers
+
+        # Generate answers in [min_answer, max_answer]
+        answers: list[float] = []
+        remaining = budget
+        for i in range(n):
+            segs_left = n - i
+            upper = min(max_answer, remaining - (segs_left - 1) * min_answer)
+            lower = min_answer
+            if upper < lower:
+                # Should be extremely rare with defaults (N<=9); clamp to average
+                upper = lower = (min_answer + max_answer) / 2.0
+            dur = rng.uniform(lower, upper)
+            answers.append(round(dur, 2))
+            remaining -= dur
+
+        total_go = sum(reads) + sum(answers)
+        if total_go > 239.0:
+            # Scale answers down proportionally (very rare safety net)
+            over = total_go - 239.0
+            scale = max(0.0, 1.0 - over / max(sum(answers), 1.0))
+            answers = [
+                round(max(min_answer, a * scale), 2) for a in answers
+            ]
+
+        rng.shuffle(reads)
+        rng.shuffle(answers)
+        return tuple(reads), tuple(answers)
 
     all_blocks: list[list[TrialConfig]] = []
-    for _ in range(num_blocks):
-        block_questions = list(questions[:num_go])
-        rng.shuffle(block_questions)
-        # Pad with recycled questions if needed
-        while len(block_questions) < num_go:
-            block_questions.extend(questions[: num_go - len(block_questions)])
+    idx = 0
+    for n in final_counts:
+        block_qs = shuffled[idx : idx + n]
+        idx += n
+        if not block_qs:
+            block_qs = [shuffled[-1] if shuffled else "Please speak freely."]
+            n = 1
 
-        block = [
-            TrialConfig(
-                task_type="speech",
-                num_go_segments=num_go,
-                go_segment_durations=go_durs,
-                segment_texts=tuple(block_questions),
-            )
-        ]
-        all_blocks.append(block)
+        read_durs, answer_durs = _fit_durations(n)
+        all_blocks.append(
+            [
+                TrialConfig(
+                    task_type="speech",
+                    num_go_segments=n,
+                    go_segment_durations=answer_durs,
+                    segment_texts=tuple(block_qs),
+                    stop_segment_durations=read_durs,
+                )
+            ]
+        )
 
     return all_blocks

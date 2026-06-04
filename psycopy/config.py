@@ -46,11 +46,18 @@ class MedocConfig:
 
 
 DEFAULT_SPEECH_QUESTIONS = [
+    # Default set (10 questions).  For a full ~25-minute session, provide ~40
+    # questions via --questions-file so each of the 5 blocks gets ~8 unique ones.
     "How's your pain today?",
     "Tell me about your favorite hobby.",
     "Describe what you had for breakfast.",
     "What are your plans for the weekend?",
     "Tell me about a place you'd like to visit.",
+    "What was the last movie or show you watched?",
+    "Describe your ideal vacation day.",
+    "What is something you're looking forward to?",
+    "Tell me about a memory that makes you smile.",
+    "How do you usually relax after a long day?",
 ]
 
 
