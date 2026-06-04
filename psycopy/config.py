@@ -21,7 +21,7 @@ class ExperimentMode(Enum):
     NORMAL = "normal"  # Full experiment with Medoc
     PRACTICE_NO_MEDOC = "practice_no_medoc"  # Practice mode without Medoc device
     PRACTICE_WITH_MEDOC = "practice_with_medoc"  # Practice mode with Medoc device
-    SPEECH = "speech"  # Free speech interview with thermal stimulation
+    SPEECH = "speech"  # Structured speech Q&A with thermal stimulation
 
 
 def _validate_medoc_config(medoc_ip: str, medoc_port: int, medoc_timeout: float) -> None:
@@ -147,7 +147,7 @@ def show_startup_dialog() -> ExperimentConfig:
             "Normal (Full experiment)",
             "Practice (no Medoc device)",
             "Practice (with Medoc device)",
-            "Speech interview (free speech + thermal)",
+            "Speech Q&A (questions + thermal)",
         ],
         initial="Normal (Full experiment)",
     )

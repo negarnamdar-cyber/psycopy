@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from psycopy.config import ExperimentConfig, ExperimentMode, MedocConfig, show_startup_dialog
 from psycopy.medoc_experiment import MedocExperiment
@@ -35,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--speech",
         action="store_true",
-        help="Run speech interview mode with thermal stimulation (free speech until shutdown).",
+        help="Run speech Q&A mode with thermal stimulation (20 s per question, 4-min blocks, 5 blocks).",
     )
     parser.add_argument("--participant-id", default="001", help="Participant identifier.")
     parser.add_argument("--session-id", default="01", help="Session identifier.")
@@ -59,6 +60,12 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
         help="Medoc socket timeout in seconds.",
+    )
+    parser.add_argument(
+        "--questions-file",
+        type=Path,
+        default=None,
+        help="Path to a text file with one speech question per line (speech mode only).",
     )
     return parser.parse_args()
 
@@ -90,6 +97,16 @@ def build_config(args: argparse.Namespace) -> ExperimentConfig:
             require_connection=(mode == ExperimentMode.NORMAL),
         )
 
+    speech_questions = None
+    if args.questions_file is not None:
+        lines = [
+            line.strip()
+            for line in args.questions_file.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        if lines:
+            speech_questions = tuple(lines)
+
     return ExperimentConfig(
         participant_id=args.participant_id,
         session_id=args.session_id,
@@ -98,6 +115,7 @@ def build_config(args: argparse.Namespace) -> ExperimentConfig:
         vad_enabled=parse_bool(args.vad_enabled),
         mode=mode,
         medoc_config=medoc_config,
+        speech_questions=speech_questions,
     )
 
 
