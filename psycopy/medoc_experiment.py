@@ -51,6 +51,7 @@ from psycopy.validation import validate_config
 
 TRIAL_DURATION_SEC = 240.0
 BLOCK_BREAK_SEC = 60.0
+SPEECH_MAX_FINAL_REST_SEC = 30.0
 VOWEL_TEXT = "Ahh"
 
 logger = logging.getLogger("psycopy.medoc_experiment")
@@ -124,6 +125,7 @@ class MedocExperiment:
         self.currently_recording = False
         self._current_set = 0
         self._current_trial_in_set = 0
+        self._consecutive_poll_failures = 0
 
         self.event_logger.set_start_time()
         if self.trials:
@@ -235,7 +237,11 @@ class MedocExperiment:
             for seg_idx, go_duration in enumerate(trial_config.go_segment_durations):
                 # --- Poll before STOP cue if interval hit -------------------
                 elapsed = time.monotonic() - trigger_timestamp
-                if client is not None and elapsed >= next_poll_at:
+                if (
+                    client is not None
+                    and self._consecutive_poll_failures < 3
+                    and elapsed >= next_poll_at
+                ):
                     status = self._poll_and_log(
                         client,
                         trial_instance_id,
@@ -277,7 +283,11 @@ class MedocExperiment:
 
                 # --- Poll during STOP if interval hit ----------------------
                 elapsed = time.monotonic() - trigger_timestamp
-                if client is not None and elapsed >= next_poll_at:
+                if (
+                    client is not None
+                    and self._consecutive_poll_failures < 3
+                    and elapsed >= next_poll_at
+                ):
                     status = self._poll_and_log(
                         client,
                         trial_instance_id,
@@ -328,7 +338,14 @@ class MedocExperiment:
             # Final STOP cue (rest period — whatever time is left in the 4-minute block)
             final_stop_ts = time.monotonic()
             elapsed = time.monotonic() - trigger_timestamp
-            final_stop = max(0.0, TRIAL_DURATION_SEC - elapsed)
+            if trial_config.task_type == "speech":
+                # Speech blocks: cap final rest so short-question blocks don't feel stuck.
+                final_stop = min(
+                    max(0.0, TRIAL_DURATION_SEC - elapsed),
+                    SPEECH_MAX_FINAL_REST_SEC,
+                )
+            else:
+                final_stop = max(0.0, TRIAL_DURATION_SEC - elapsed)
             self.event_logger.log(
                 event_type="stop_cue",
                 trial_instance_id=trial_instance_id,
@@ -437,6 +454,7 @@ class MedocExperiment:
 
     def run_set(self, set_num: int, trials: list[TrialConfig], client: MedocClient | None = None) -> None:
         self._current_set = set_num
+        self._consecutive_poll_failures = 0
         self.event_logger.log(
             event_type="block_start",
             trial_instance_id="",
@@ -530,9 +548,16 @@ class MedocExperiment:
                 status.get("temperature_celsius"),
                 status.get("device_state"),
             )
+            self._consecutive_poll_failures = 0
             return status
         except Exception as exc:
             self.logger.warning("Medoc poll failed: %s", exc)
+            self._consecutive_poll_failures += 1
+            if self._consecutive_poll_failures >= 3:
+                self.logger.warning(
+                    "Medoc polling disabled after %d consecutive failures",
+                    self._consecutive_poll_failures,
+                )
             return None
 
     def save_all_loggers(self) -> None:
@@ -574,6 +599,7 @@ class MedocExperiment:
                                 block_num,
                                 exc,
                             )
+                            speech_client = None
 
                     self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
                     self.run_set(block_num, block_trials, client=speech_client)

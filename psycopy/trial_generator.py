@@ -226,39 +226,16 @@ def generate_speech_trials(
     rng.shuffle(shuffled)
 
     def _fit_durations(n: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
-        """Generate n read durations and n answer durations that fit in 239 s.
+        """Generate n read durations and n answer durations.
 
-        Returns (read_durs, answer_durs).  A 1-second final STOP is reserved.
+        Returns (read_durs, answer_durs).  Durations are paired by index so
+        each question keeps its matched read / answer times (no independent
+        shuffling).  The block total is allowed to be less than 240 s; the
+        runner caps the final rest period so short-question blocks do not
+        leave the participant waiting for minutes.
         """
         reads = [round(rng.uniform(min_read, max_read), 2) for _ in range(n)]
-        total_read = sum(reads)
-        budget = 239.0 - total_read  # seconds left for answers
-
-        # Generate answers in [min_answer, max_answer]
-        answers: list[float] = []
-        remaining = budget
-        for i in range(n):
-            segs_left = n - i
-            upper = min(max_answer, remaining - (segs_left - 1) * min_answer)
-            lower = min_answer
-            if upper < lower:
-                # Should be extremely rare with defaults (N<=9); clamp to average
-                upper = lower = (min_answer + max_answer) / 2.0
-            dur = rng.uniform(lower, upper)
-            answers.append(round(dur, 2))
-            remaining -= dur
-
-        total_go = sum(reads) + sum(answers)
-        if total_go > 239.0:
-            # Scale answers down proportionally (very rare safety net)
-            over = total_go - 239.0
-            scale = max(0.0, 1.0 - over / max(sum(answers), 1.0))
-            answers = [
-                round(max(min_answer, a * scale), 2) for a in answers
-            ]
-
-        rng.shuffle(reads)
-        rng.shuffle(answers)
+        answers = [round(rng.uniform(min_answer, max_answer), 2) for _ in range(n)]
         return tuple(reads), tuple(answers)
 
     all_blocks: list[list[TrialConfig]] = []
