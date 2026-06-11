@@ -65,6 +65,10 @@ DEFAULT_SPEECH_QUESTIONS = [
 class ExperimentConfig:
     participant_id: str = "001"
     session_id: str = "01"
+    age: str = ""
+    sex: str = ""
+    ethnicity: str = ""
+    first_language: str = ""
     random_seed: str = ""
     sample_rate: int = 44100
     fullscreen: bool = True
@@ -143,7 +147,10 @@ def show_startup_dialog() -> ExperimentConfig:
     # Participant Information
     dialog.addText("Participant Information")
     dialog.addField("Participant ID:", defaults.participant_id)
-    dialog.addField("Session ID:", defaults.session_id)
+    dialog.addField("Age:", defaults.age)
+    dialog.addField("Sex:", defaults.sex)
+    dialog.addField("Ethnicity:", defaults.ethnicity)
+    dialog.addField("First Language:", defaults.first_language)
     dialog.addText("")
 
     # Experiment Mode Selection
@@ -204,14 +211,17 @@ def show_startup_dialog() -> ExperimentConfig:
     assert values is not None  # for type checker
 
     participant_id = str(values[0]).strip() if values[0] else "001"
-    session_id = str(values[1]).strip() if values[1] else "01"
-    mode_str = str(values[2]).strip() if values[2] else "Normal (Full experiment)"
-    random_seed = str(values[3]).strip() if values[3] else ""
-    fullscreen = _str_to_bool(str(values[4])) if values[4] else True
-    vad_enabled = _str_to_bool(str(values[5])) if values[5] else True
-    medoc_ip = str(values[6]).strip() if values[6] else "192.168.1.100"
-    medoc_port = int(values[7]) if values[7] else 5000
-    medoc_timeout = float(values[8]) if values[8] else 5.0
+    age = str(values[1]).strip() if values[1] else ""
+    sex = str(values[2]).strip() if values[2] else ""
+    ethnicity = str(values[3]).strip() if values[3] else ""
+    first_language = str(values[4]).strip() if values[4] else ""
+    mode_str = str(values[5]).strip() if values[5] else "Normal (Full experiment)"
+    random_seed = str(values[6]).strip() if values[6] else ""
+    fullscreen = _str_to_bool(str(values[7])) if values[7] else True
+    vad_enabled = _str_to_bool(str(values[8])) if values[8] else True
+    medoc_ip = str(values[9]).strip() if values[9] else "192.168.1.100"
+    medoc_port = int(values[10]) if values[10] else 5000
+    medoc_timeout = float(values[11]) if values[11] else 5.0
 
     # Determine mode
     mode_str_lower = mode_str.lower()
@@ -240,7 +250,10 @@ def show_startup_dialog() -> ExperimentConfig:
 
     config = ExperimentConfig(
         participant_id=participant_id,
-        session_id=session_id,
+        age=age,
+        sex=sex,
+        ethnicity=ethnicity,
+        first_language=first_language,
         random_seed=random_seed,
         fullscreen=fullscreen,
         vad_enabled=vad_enabled,

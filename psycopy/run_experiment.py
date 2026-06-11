@@ -40,6 +40,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--participant-id", default="001", help="Participant identifier.")
     parser.add_argument("--session-id", default="01", help="Session identifier.")
+    parser.add_argument("--age", default="", help="Participant age.")
+    parser.add_argument("--sex", default="", help="Participant sex.")
+    parser.add_argument("--ethnicity", default="", help="Participant ethnicity.")
+    parser.add_argument("--first-language", default="", help="Participant first language.")
     parser.add_argument("--random-seed", default="", help="Optional random seed for reproducibility.")
     parser.add_argument(
         "--fullscreen",
@@ -110,6 +114,10 @@ def build_config(args: argparse.Namespace) -> ExperimentConfig:
     return ExperimentConfig(
         participant_id=args.participant_id,
         session_id=args.session_id,
+        age=args.age,
+        sex=args.sex,
+        ethnicity=args.ethnicity,
+        first_language=args.first_language,
         random_seed=args.random_seed,
         fullscreen=parse_bool(args.fullscreen),
         vad_enabled=parse_bool(args.vad_enabled),
