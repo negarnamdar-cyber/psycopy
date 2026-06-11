@@ -43,8 +43,10 @@ def create_output_directory(config: dict[str, Any]) -> SessionPaths:
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     participant = config["participant_id"]
     session = config["session_id"]
+    mode = config.get("mode", "")
+    task_label = "speech" if mode == "speech" else "vowel"
 
-    output_dir = Path("data") / f"{timestamp}_sub-{participant}_session-{session}"
+    output_dir = Path("data") / f"{timestamp}_sub-{participant}_session-{session}_task-{task_label}"
     audio_dir = output_dir / "audio"
     audio_16k_dir = output_dir / "audio_16k"
     output_dir.mkdir(parents=True, exist_ok=True)
