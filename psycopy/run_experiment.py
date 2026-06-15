@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--speech",
         action="store_true",
-        help="Run speech Q&A mode with thermal stimulation (20 s per question, 4-min blocks, 5 blocks).",
+        help="Run speech Q&A mode with thermal stimulation (~30 s per question, 4-min blocks, 4 blocks).",
     )
     parser.add_argument("--participant-id", default="001", help="Participant identifier.")
     parser.add_argument("--session-id", default="01", help="Session identifier.")

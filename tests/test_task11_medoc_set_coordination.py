@@ -2,7 +2,7 @@
 
 Tests:
 - run_set() executes 6 trials per block
-- run() executes 5 blocks
+- run() executes 4 blocks
 - 1-minute break between blocks
 - User abort saves data
 """
@@ -211,8 +211,8 @@ class TestRunSetOneTrial:
             assert sentence_count == 0, f"Expected 0 sentence trials, got {sentence_count}"
 
 
-class TestRunFiveBlocks:
-    """QA Scenario 2: Full experiment 5 blocks."""
+class TestRunFourBlocks:
+    """QA Scenario 2: Full experiment 4 blocks."""
 
     def test_run_blocks_with_breaks(
         self,
@@ -224,7 +224,7 @@ class TestRunFiveBlocks:
         mock_logger,
         mock_time,
     ):
-        """Test that 1-minute break is shown between blocks (4 times for 5 blocks)."""
+        """Test that 1-minute break is shown between blocks (3 times for 4 blocks)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -259,12 +259,12 @@ class TestRunFiveBlocks:
             # Run full experiment
             exp.run()
 
-            # Verify break was called 4 times (between 5 blocks)
-            assert len(break_calls) == 4, (
-                f"Expected 4 break calls (between 5 blocks), got {len(break_calls)}"
+            # Verify break was called 3 times (between 4 blocks)
+            assert len(break_calls) == 3, (
+                f"Expected 3 break calls (between 4 blocks), got {len(break_calls)}"
             )
 
-    def test_run_full_experiment_five_trials(
+    def test_run_full_experiment_four_trials(
         self,
         temp_output_dir,
         mock_session_paths,
@@ -274,7 +274,7 @@ class TestRunFiveBlocks:
         mock_logger,
         mock_time,
     ):
-        """Test that run() executes all 5 trials (5 blocks x 1 trial)."""
+        """Test that run() executes all 4 trials (4 blocks x 1 trial)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -306,9 +306,9 @@ class TestRunFiveBlocks:
             # Run full experiment
             exp.run()
 
-            # Verify total trials = 5 blocks x 1 trial = 5
+            # Verify total trials = 4 blocks x 1 trial = 4
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 5, f"Expected 5 trials, got {total_trials}"
+            assert total_trials == 4, f"Expected 4 trials, got {total_trials}"
 
 
 class TestUserAbortSavesData:
@@ -358,17 +358,17 @@ class TestUserAbortSavesData:
             # Mock _show_break_screen
             exp._show_break_screen = MagicMock()
 
-            # Patch run_trial to raise UserAbort on trial 5 (block 4, trial 0)
+            # Patch run_trial to raise UserAbort on trial 4 (block 3, trial 0)
             original_run_trial = exp.run_trial
             call_count = [0]
 
-            def abort_on_trial_5(set_num, trial_num, trial_config, client=None):
+            def abort_on_trial_4(set_num, trial_num, trial_config, client=None):
                 call_count[0] += 1
-                if call_count[0] == 5:  # Abort on 5th overall trial
+                if call_count[0] == 4:  # Abort on 4th overall trial
                     raise UserAbort()
                 return original_run_trial(set_num, trial_num, trial_config, client=client)
 
-            exp.run_trial = abort_on_trial_5
+            exp.run_trial = abort_on_trial_4
 
             # Run should abort
             with pytest.raises(UserAbort):

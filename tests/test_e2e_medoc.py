@@ -1,7 +1,7 @@
 """End-to-end validation test for Medoc experiment flow.
 
 Tests verify:
-- 5 blocks x 1 trial = 5 trials total
+- 4 blocks x 1 trial = 4 trials total
 - All trials are vowel trials
 - Each trial has 3-7 GO segments, each 3-7 seconds
 - All CSV files created (trials.csv, medoc_events.csv, events.csv)
@@ -248,7 +248,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Run E2E test with all mocks, validate 5 trials."""
+        """QA Scenario: Run E2E test with all mocks, validate 4 trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -279,9 +279,9 @@ class TestFullExperimentOutput:
             exp._show_break_screen = MagicMock()
             exp.run()
 
-            # Validate: 5 blocks x 1 trial = 5 trials total
+            # Validate: 4 blocks x 1 trial = 4 trials total
             total_trials = len(exp.trial_logger.trials)
-            assert total_trials == 5, f"Expected 5 trials, got {total_trials}"
+            assert total_trials == 4, f"Expected 4 trials, got {total_trials}"
 
     def test_e2e_trial_distribution_all_vowel(
         self,
@@ -292,7 +292,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Validate all 5 trials are vowel trials."""
+        """QA Scenario: Validate all 4 trials are vowel trials."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -437,7 +437,7 @@ class TestCSVOutputValidation:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: trials.csv has 5 rows with required fields."""
+        """QA Scenario: trials.csv has 4 rows with required fields."""
         import pandas as pd
         from psycopy.medoc_experiment import MedocExperiment
 
@@ -474,7 +474,7 @@ class TestCSVOutputValidation:
             assert trials_path.exists(), "trials.csv not created"
 
             df = pd.read_csv(trials_path)
-            assert len(df) == 5, f"Expected 5 rows in trials.csv, got {len(df)}"
+            assert len(df) == 4, f"Expected 4 rows in trials.csv, got {len(df)}"
 
             # Verify required columns
             required_columns = [
@@ -535,10 +535,10 @@ class TestCSVOutputValidation:
             content = medoc_path.read_text()
             lines = content.strip().split("\n")
 
-            # Validate: 5 trigger + 5 status = 10 total (or merged events)
+            # Validate: 4 trigger + 4 status = 8 total (or merged events)
             data_lines = [l for l in lines[1:] if l.strip()]  # Skip header
-            assert len(data_lines) >= 5, (
-                f"Expected at least 5 medoc event rows, got {len(data_lines)}"
+            assert len(data_lines) >= 4, (
+                f"Expected at least 4 medoc event rows, got {len(data_lines)}"
             )
 
             # Verify required columns
@@ -680,10 +680,10 @@ class TestCSVOutputValidation:
                 elif "trial_end" in event_type.lower():
                     trial_ends += 1
 
-            assert trial_starts >= 5, (
-                f"Expected at least 5 trial_start events, got {trial_starts}"
+            assert trial_starts >= 4, (
+                f"Expected at least 4 trial_start events, got {trial_starts}"
             )
-            assert trial_ends >= 5, f"Expected at least 5 trial_end events, got {trial_ends}"
+            assert trial_ends >= 4, f"Expected at least 4 trial_end events, got {trial_ends}"
 
     def test_e2e_config_json_snapshot(
         self,

@@ -254,7 +254,7 @@ class PsychoPyUI:
                     "  • The screen will switch multiple times per trial\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
                     "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 5 trials, with a 1-minute break between each.\n\n"
+                    "There will be 4 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
@@ -267,7 +267,7 @@ class PsychoPyUI:
                     "  • STOP immediately when the screen turns RED\n"
                     "  • Stay silent during STOP periods\n"
                     "  • The screen will switch multiple times per trial\n\n"
-                    "There will be 5 trials, with a 1-minute break between each.\n\n"
+                    "There will be 4 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
         else:
@@ -280,7 +280,7 @@ class PsychoPyUI:
                     "Speak 'Ahh' continuously.\n\n"
                     "Thermal stimulation will be applied during the experiment.\n"
                     "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 5 trials, with a 1-minute break between each.\n\n"
+                    "There will be 4 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
@@ -289,7 +289,7 @@ class PsychoPyUI:
                     "Each trial lasts 4 minutes.\n"
                     "The screen will stay GREEN throughout each trial.\n"
                     "Speak 'Ahh' continuously.\n\n"
-                    "There will be 5 trials, with a 1-minute break between each.\n\n"
+                    "There will be 4 trials, with a 1-minute break between each.\n\n"
                     "Press SPACE to begin."
                 )
         self.instruction_text.text = instructions
@@ -303,7 +303,7 @@ class PsychoPyUI:
         instructions = (
             "SPEECH Q&A TASK\n\n"
             "A question will appear on screen.\n"
-            "When the screen turns GREEN, you have 15–25 seconds to answer.\n"
+            "When the screen turns GREEN, you have 17–23 seconds to answer.\n"
             "Stop speaking when the screen turns RED.\n\n"
         )
         if medoc_enabled:

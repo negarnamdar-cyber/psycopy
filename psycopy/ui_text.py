@@ -19,7 +19,7 @@ IMPORTANT RULES:
   • Remain silent during STOP periods
   • The screen will switch multiple times within each 4-minute trial
 
-There will be 5 trials, with a 1-minute break between each.
+There will be 4 trials, with a 1-minute break between each.
 
 Press SPACE to begin the experiment.
 """
@@ -31,7 +31,7 @@ Each trial lasts 4 minutes.
 The screen will remain GREEN throughout each trial.
 Speak 'Ahh' continuously.
 
-There will be 5 trials, with a 1-minute break between each.
+There will be 4 trials, with a 1-minute break between each.
 
 Press SPACE to begin the experiment.
 """

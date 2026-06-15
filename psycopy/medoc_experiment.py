@@ -6,22 +6,24 @@ VAD coordination, and data logging.
 
 Two experiment modes are supported:
 
-1. Vowel mode (NORMAL / PRACTICE):
-   - 5 blocks of 1 trial each = 5 total trials
-   - Each trial: 4 minutes (240 seconds) of alternating STOP/GO segments
-   - 1-minute break between blocks
-   - Total experiment time: ~25 minutes
+ 1. Vowel mode (NORMAL / PRACTICE):
+    - 4 blocks of 1 trial each = 4 total trials
+    - Each trial: 4 minutes (240 seconds) of alternating STOP/GO segments
+    - 1-minute break between blocks
+    - Total experiment time: ~20 minutes
 
-2. Speech mode (SPEECH):
-   - Structured Q&A with thermal stimulation
-   - Always 5 blocks, each a 4-minute trial
-   - Each block contains ~8 questions (40 total is the sweet spot)
-   - Per question: 4--7 s READ (STOP, question shown) +
-     15--25 s ANSWER (GO, screen turns green)
-   - Remaining time in the block is a final STOP (rest)
-   - 1-minute break between blocks
-   - Questions are configurable via ``ExperimentConfig.speech_questions``
-   - Extras beyond 40 are truncated (no recycling)
+ 2. Speech mode (SPEECH):
+    - Structured Q&A with thermal stimulation
+    - Always 4 blocks, each a 4-minute trial
+    - Each block contains 8 questions (32 total); each question lasts exactly 30 s
+      (7--13 s READ + 17--23 s ANSWER) so that 1-minute Medoc temperature
+      steps fall between questions, never during one
+    - Per question: 7--13 s READ (STOP, question shown) +
+      17--23 s ANSWER (GO, screen turns green)
+    - No final rest needed because 8 x 30 s = 240 s
+    - 1-minute break between blocks
+    - Questions are configurable via ``ExperimentConfig.speech_questions``
+    - Extras beyond 32 are truncated (no recycling)
 """
 
 from __future__ import annotations
@@ -104,7 +106,7 @@ class MedocExperiment:
         num_blocks = (
             1
             if config.mode in (ExperimentMode.PRACTICE_NO_MEDOC, ExperimentMode.PRACTICE_WITH_MEDOC)
-            else 5
+            else 4
         )
 
         if config.mode == ExperimentMode.SPEECH:
@@ -387,8 +389,6 @@ class MedocExperiment:
             if audio_started or self.currently_recording:
                 try:
                     self.audio.stop()
-                    self.currently_recording = False
-                    audio_started = False
                     self.event_logger.log(
                         event_type="recording_end",
                         trial_instance_id=trial_instance_id,
@@ -396,6 +396,8 @@ class MedocExperiment:
                     )
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
+                self.currently_recording = False
+                audio_started = False
 
         except UserAbort:
             self.logger.info("Trial %d.%d interrupted by graceful shutdown", set_num, trial_num)
@@ -407,7 +409,6 @@ class MedocExperiment:
             if audio_started or self.currently_recording:
                 try:
                     self.audio.stop()
-                    self.currently_recording = False
                     self.event_logger.log(
                         event_type="recording_end",
                         trial_instance_id=trial_instance_id,
@@ -415,6 +416,8 @@ class MedocExperiment:
                     )
                 except Exception as exc:
                     self.logger.warning("Error stopping audio: %s", exc)
+                self.currently_recording = False
+                audio_started = False
 
         trial_end_timestamp = time.monotonic()
         actual_duration = trial_end_timestamp - trigger_timestamp
@@ -700,6 +703,12 @@ class MedocExperiment:
             raise
 
         finally:
+            if self.currently_recording:
+                try:
+                    self.audio.abort()
+                except Exception as exc:
+                    self.logger.warning("Error aborting audio in finally: %s", exc)
+                self.currently_recording = False
             self.ui.close()
 
 
