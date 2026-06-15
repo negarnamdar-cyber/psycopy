@@ -14,7 +14,7 @@ Produces:
         ...
     segments.csv   (columns: source_file, trial_instance_id, segment_index,
                     segment_filename, start_sec, end_sec, duration_sec,
-                    temperature_celsius)
+                    pain)
 """
 
 from __future__ import annotations
@@ -79,7 +79,7 @@ def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
     """Parse events.csv and return GO segments per trial_instance_id.
 
     Each segment has:
-        segment_index, start_sec, end_sec, duration_sec, temperature_celsius
+        segment_index, start_sec, end_sec, duration_sec, pain
     """
     events = _load_events_csv(events_csv)
     go_segments: dict[str, list[dict[str, Any]]] = {}
@@ -106,7 +106,7 @@ def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
                 "start_sec": round(float(elapsed), 3),
                 "end_sec": round(float(elapsed) + float(duration), 3),
                 "duration_sec": round(float(duration), 3),
-                "temperature_celsius": temp if temp is not None else "",
+                "pain": temp if temp is not None else "",
             }
         )
 
@@ -245,7 +245,7 @@ def segment_session(
                     "start_sec": round(start_sec, 3),
                     "end_sec": round(end_sec, 3),
                     "duration_sec": round(end_sec - start_sec, 3),
-                    "temperature_celsius": seg["temperature_celsius"],
+                    "pain": seg["pain"],
                 }
             )
             logger.info(
