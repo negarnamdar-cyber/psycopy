@@ -46,18 +46,60 @@ class MedocConfig:
 
 
 DEFAULT_SPEECH_QUESTIONS = [
-    # Default set (10 questions).  For a full ~25-minute session, provide ~40
-    # questions via --questions-file so each of the 5 blocks gets ~8 unique ones.
-    "How's your pain today?",
-    "Tell me about your favorite hobby.",
-    "Describe what you had for breakfast.",
-    "What are your plans for the weekend?",
-    "Tell me about a place you'd like to visit.",
-    "What was the last movie or show you watched?",
-    "Describe your ideal vacation day.",
-    "What is something you're looking forward to?",
-    "Tell me about a memory that makes you smile.",
-    "How do you usually relax after a long day?",
+    # 40 open-ended, present-moment pain questions drawn from validated instruments:
+    # McGill Pain Questionnaire (Melzack, 1975), Brief Pain Inventory
+    # (Cleeland & Ryan, 1994), PROMIS Pain Interference, and semi-structured
+    # chronic pain interview protocols (Snelgrove & Liossi, 2013).
+    # All questions require narrative answers — none can be answered yes/no.
+    # --- Sensory quality (McGill MPQ sensory subscale) ---
+    "How would you describe the quality of your pain right now?",
+    "How would you describe the feeling of pressure or tension in your body at this moment?",
+    "How would you describe the temperature quality of the sensation you are feeling right now?",
+    "How would you describe the sharpness or depth of the pain at this moment?",
+    "How would you describe the rhythm of the pain right now — the way it moves or stays?",
+    "How would you describe whether the pain is spread across a wide area or concentrated in one point?",
+    # --- Intensity (Brief Pain Inventory) ---
+    "How would you describe the overall strength of the pain you are feeling right now?",
+    "Describe what this level of pain feels like in your body at this moment.",
+    "How does the pain you feel right now compare to how it felt earlier today?",
+    "How would you describe the way the pain has been changing, if at all, as you sit here?",
+    # --- Location and spread (BPI, MPQ spatial descriptors) ---
+    "Where in your body are you feeling pain right now, and how would you describe that location?",
+    "How would you describe the way the pain is distributed — whether it stays in one place or moves?",
+    "How would you describe the path or direction the pain travels, if it moves at all?",
+    # --- Present sensations and body awareness ---
+    "If you were trying to explain this pain to someone who has never felt it, how would you describe it?",
+    "How would you describe what the skin or surface feels like in the area where the pain is?",
+    "How would you describe the way your body feels tense or braced because of the pain right now?",
+    "What sensations in your body feel most prominent or uncomfortable to you at this moment?",
+    "How does the pain respond when you breathe — what changes, if anything?",
+    # --- Emotional and affective state right now (McGill affective subscale, BEEP questionnaire) ---
+    "How is the pain making you feel emotionally at this moment?",
+    "How would you describe the emotional quality of the pain — what feelings does it stir up?",
+    "How would you describe your mood right now, given the pain you are feeling?",
+    "What feelings come up for you when you focus on the pain you are experiencing right now?",
+    # --- Aggravating and alleviating factors in the moment (BPI, clinical interview protocols) ---
+    "What aspects of your current situation — your position, the temperature, any movement — seem to be affecting the pain right now?",
+    "What, if anything, seems to be easing the pain even slightly at this moment?",
+    "How does shifting your body position affect the way the pain feels right now?",
+    "How does turning your attention toward the pain change the way it feels?",
+    # --- Functional awareness in the moment (PROMIS Pain Interference) ---
+    "How is the pain you feel right now affecting your ability to concentrate?",
+    "How would you describe the way the pain is affecting your comfort and ability to settle right now?",
+    "How much of your attention is the pain taking up right now, and what is that like?",
+    "How does the pain influence your urge to move or stay still at this moment?",
+    # --- Comparing and contextualizing present pain ---
+    "How would you describe today's pain compared to what you typically experience?",
+    "How has the pain shifted or changed since you first sat down here?",
+    "How would you describe the way the pain has been occupying your awareness today?",
+    "How would you describe the pain right now compared to how it felt this morning?",
+    # --- Coping and moment-to-moment experience (qualitative pain narrative research) ---
+    "What are you doing, mentally or physically, to get through the pain right now?",
+    "What word or image comes to mind when you focus on what you are feeling right now?",
+    "What is the most noticeable thing about the pain you are experiencing at this moment?",
+    "How would you explain this pain to someone else in your own words?",
+    "What aspect of what you are feeling right now is hardest to put into words, and why?",
+    "What else about how you are feeling right now feels important to describe?",
 ]
 
 
