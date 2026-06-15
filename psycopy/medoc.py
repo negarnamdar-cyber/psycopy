@@ -344,18 +344,52 @@ class MedocClient:
         return False
 
     def _stop_to_ready(self) -> None:
+        # Pre-check: if already READY/IDLE, sending STOP is illegal and can
+        # put the device into an error state where it stops responding.
         try:
-            self._send_framed_command_once(
+            status = self.poll_status(tag="CHECK_BEFORE_STOP")
+            test_state = status.get("test_state")
+            device_state = status.get("device_state")
+            if test_state in (0, 3) and device_state in (0, 1):
+                logger.debug(
+                    "Medoc already in READY/IDLE (test_state=%s, device_state=%s), skipping STOP",
+                    test_state,
+                    device_state,
+                )
+                return
+        except Exception as exc:
+            # If we can't read status, the device may be unresponsive or in an
+            # error state. Don't risk a long freeze — just return.
+            logger.warning("Could not check Medoc status before STOP: %s", exc)
+            return
+
+        # Device is running — send STOP
+        raw: bytes | None = None
+        try:
+            raw = self._send_framed_command_once(
                 self.STOP,
                 tag=f"STOP {self.UNIFIED_PROGRAM_LABEL}",
                 allow_incomplete=True,
             )
         except Exception as exc:
-            logger.debug("STOP before unified start did not complete: %s", exc)
+            logger.debug("STOP did not complete: %s", exc)
 
-        deadline = time.time() + 10.0
-        while time.time() < deadline:
-            time.sleep(0.2)
+        # If STOP returned ILLEGAL_STATE / NOT_PROPER_STATE, the device is likely
+        # already stopped or in an error state. One verify poll is enough.
+        rc = self._parse_response_code_or_none(raw) if raw else None
+        if rc in (MedocResponseCode.ILLEGAL_STATE, MedocResponseCode.NOT_PROPER_STATE):
+            logger.debug("STOP returned response code %s — verifying once", rc)
+            try:
+                status = self.poll_status(tag="VERIFY_AFTER_STOP_ERROR")
+                if status.get("test_state") in (0, 3) and status.get("device_state") in (0, 1):
+                    return
+            except Exception as exc:
+                logger.debug("Verify-after-STOP poll failed: %s", exc)
+            return
+
+        # Poll briefly for READY (max ~5 sec to avoid long freezes)
+        for _ in range(10):
+            time.sleep(0.5)
             try:
                 status = self.poll_status(tag=f"WAIT_READY({self.UNIFIED_PROGRAM_LABEL})")
             except Exception as exc:
