@@ -1,26 +1,28 @@
-"""ML Segmenter — chop session audio into individual speech segments via VAD.
+"""ML Segmenter — cut session audio into individual GO segments using event timestamps.
 
 Usage:
     python scripts/ml_segmenter.py <participant_id> [--data-dir data]
 
 Looks in data/ for session folder(s) matching the participant,
-then slices every WAV in the session's audio/ folder into speech clips.
+then slices every WAV in the session's audio/ folder into GO segments
+using the go_cue timestamps from events.csv.
 
 Produces:
     data/..._segments/
         segment_0001.wav
         segment_0002.wav
         ...
-    segments.csv   (columns: source_file, segment_index, start_sec, end_sec,
-                    duration_sec, temperature_celsius)
+    segments.csv   (columns: source_file, trial_instance_id, segment_index,
+                    segment_filename, start_sec, end_sec, duration_sec,
+                    temperature_celsius)
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,18 +35,6 @@ logger = logging.getLogger("psycopy.ml_segmenter")
 
 TARGET_SAMPLE_RATE = 16000
 
-# VAD defaults
-_VAD_CONFIG: dict[str, int] = {
-    "aggressiveness": 2,
-    "frame_duration_ms": 30,
-    "silence_frames": 10,
-}
-
-try:
-    import webrtcvad
-except ImportError:
-    webrtcvad = None  # type: ignore[assignment]
-
 
 def _find_session_dirs(data_dir: Path, participant_id: str) -> list[Path]:
     """Return sorted list of session dirs whose name contains the participant id."""
@@ -52,28 +42,108 @@ def _find_session_dirs(data_dir: Path, participant_id: str) -> list[Path]:
     if not data_dir.is_dir():
         return []
 
-    # Normalize participant id for matching
     pid = participant_id.strip().lower()
-    # Session folder pattern: data/YYYYMMDD_HHMMSS_sub-{participant}_session-{session}/
-    # The participant part could be like "001", "P001", etc.
     candidates: list[Path] = []
     for child in data_dir.iterdir():
         if not child.is_dir():
             continue
         name = child.name.lower()
-        # Skip segment-output dirs so they don't look like sessions
         if name.endswith("_segments"):
             continue
-        # Check if participant id appears in folder name
         if pid in name:
             candidates.append(child)
 
-    # Sort by name (timestamp prefix means chronological)
     candidates.sort(key=lambda p: p.name)
     return candidates
 
 
-def read_wav(path: Path) -> tuple[np.ndarray, int]:
+def _load_events_csv(path: Path) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    with open(path, "r", encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            rows.append(row)
+    return rows
+
+
+def _parse_event_data(data_str: str) -> dict[str, Any]:
+    if not data_str:
+        return {}
+    try:
+        return json.loads(data_str)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
+    """Parse events.csv and return GO segments per trial_instance_id.
+
+    Each segment has:
+        segment_index, start_sec, end_sec, duration_sec, temperature_celsius
+    """
+    events = _load_events_csv(events_csv)
+    go_segments: dict[str, list[dict[str, Any]]] = {}
+
+    for row in events:
+        if row.get("event_type") != "go_cue":
+            continue
+        trial_id = row.get("trial_instance_id", "").strip()
+        if not trial_id:
+            continue
+        data = _parse_event_data(row.get("event_data", ""))
+
+        elapsed = data.get("trial_elapsed_sec")
+        duration = data.get("cue_duration_sec")
+        temp = data.get("temperature_celsius")
+        seg_idx = data.get("segment_index", 0)
+
+        if elapsed is None or duration is None:
+            continue
+
+        go_segments.setdefault(trial_id, []).append(
+            {
+                "segment_index": int(seg_idx),
+                "start_sec": round(float(elapsed), 3),
+                "end_sec": round(float(elapsed) + float(duration), 3),
+                "duration_sec": round(float(duration), 3),
+                "temperature_celsius": temp if temp is not None else "",
+            }
+        )
+
+    # Sort by segment_index within each trial
+    for trial_id in go_segments:
+        go_segments[trial_id].sort(key=lambda x: x["segment_index"])
+
+    return go_segments
+
+
+def _resolve_wav(audio_dir: Path, trial_instance_id: str) -> Path | None:
+    """Match a trial_instance_id to its WAV file."""
+    # trial_instance_id format: {participant_id}_{session_id}_block{set_num}_{trial_num:03d}
+    parts = trial_instance_id.split("_")
+    if len(parts) >= 4:
+        participant_id = parts[0]
+        block_num = parts[2].replace("block", "")
+        trial_num = parts[3]
+        expected = f"sub-{participant_id}_block-{block_num}_trial-{trial_num}.wav"
+        wav_path = audio_dir / expected
+        if wav_path.exists():
+            return wav_path
+
+    # Fallback: any WAV containing the trial id
+    candidates = list(audio_dir.glob(f"*{trial_instance_id}*.wav"))
+    if candidates:
+        return candidates[0]
+
+    # Last fallback: single WAV in directory
+    all_wavs = list(audio_dir.glob("*.wav"))
+    if len(all_wavs) == 1:
+        return all_wavs[0]
+
+    return None
+
+
+def _read_wav(path: Path) -> tuple[np.ndarray, int]:
     """Read a WAV file and return float32 samples + sample rate."""
     rate, audio = wavfile.read(str(path))
     if audio.ndim > 1:
@@ -86,15 +156,14 @@ def read_wav(path: Path) -> tuple[np.ndarray, int]:
     return audio, rate
 
 
-def write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
+def _write_wav(path: Path, audio: np.ndarray, rate: int) -> None:
     """Write float32 mono audio to 16-bit WAV."""
     path.parent.mkdir(parents=True, exist_ok=True)
     pcm = (np.clip(audio, -1.0, 1.0) * 32767.0).astype(np.int16)
     wavfile.write(str(path), rate, pcm)
 
 
-def resample_to_16k(audio: np.ndarray, rate: int) -> np.ndarray:
-    """Resample audio to 16 kHz."""
+def _resample_to_16k(audio: np.ndarray, rate: int) -> np.ndarray:
     if rate == TARGET_SAMPLE_RATE:
         return audio
     g = np.gcd(rate, TARGET_SAMPLE_RATE)
@@ -103,117 +172,26 @@ def resample_to_16k(audio: np.ndarray, rate: int) -> np.ndarray:
     return resample_poly(audio, up, down).astype(np.float32)
 
 
-def find_speech_segments(
-    wav_path: Path,
-    aggressiveness: int = _VAD_CONFIG["aggressiveness"],
-    frame_duration_ms: int = _VAD_CONFIG["frame_duration_ms"],
-    silence_frames: int = _VAD_CONFIG["silence_frames"],
-    min_segment_sec: float = 0.3,
-) -> list[dict[str, Any]]:
-    """Run WebRTC VAD and return list of speech segments.
-
-    Each segment has: start_sec, end_sec, duration_sec.
-    Segments shorter than min_segment_sec are dropped.
-    """
-    if webrtcvad is None:
-        logger.warning("webrtcvad not installed — run: pip install webrtcvad-wheels")
-        return []
-
-    samples, rate = read_wav(wav_path)
-    samples = resample_to_16k(samples, rate)
-    rate = TARGET_SAMPLE_RATE
-
-    frame_size = int(rate * frame_duration_ms / 1000)
-    vad = webrtcvad.Vad(aggressiveness)
-
-    # Collect contiguous speech regions
-    is_speaking = False
-    consecutive_speech = 0
-    consecutive_silence = 0
-    speech_start_time: float | None = None
-
-    regions: list[dict[str, float]] = []
-
-    num_frames = len(samples) // frame_size
-    for i in range(num_frames):
-        frame = samples[i * frame_size : (i + 1) * frame_size]
-        pcm = (frame * 32767.0).astype(np.int16).tobytes()
-        ts = i * frame_duration_ms / 1000.0
-
-        try:
-            speech = vad.is_speech(pcm, rate)
-        except Exception as exc:
-            logger.warning("VAD error at %.3f s in %s: %s", ts, wav_path.name, exc)
-            continue
-
-        if speech:
-            consecutive_speech += 1
-            consecutive_silence = 0
-            if not is_speaking and consecutive_speech >= 2:
-                is_speaking = True
-                speech_start_time = ts
-        else:
-            consecutive_silence += 1
-            consecutive_speech = 0
-            if is_speaking and consecutive_silence >= silence_frames:
-                is_speaking = False
-                if speech_start_time is not None:
-                    duration = ts - speech_start_time
-                    if duration >= min_segment_sec:
-                        regions.append(
-                            {
-                                "start_sec": round(speech_start_time, 3),
-                                "end_sec": round(ts, 3),
-                                "duration_sec": round(duration, 3),
-                            }
-                        )
-                speech_start_time = None
-
-    # Close trailing speech
-    if is_speaking and speech_start_time is not None:
-        end_time = num_frames * frame_duration_ms / 1000.0
-        duration = end_time - speech_start_time
-        if duration >= min_segment_sec:
-            regions.append(
-                {
-                    "start_sec": round(speech_start_time, 3),
-                    "end_sec": round(end_time, 3),
-                    "duration_sec": round(duration, 3),
-                }
-            )
-
-    # Merge very close segments (gaps < 0.15 sec)
-    merged: list[dict[str, float]] = []
-    for r in regions:
-        if merged and r["start_sec"] - merged[-1]["end_sec"] < 0.15:
-            merged[-1]["end_sec"] = r["end_sec"]
-            merged[-1]["duration_sec"] = merged[-1]["end_sec"] - merged[-1]["start_sec"]
-        else:
-            merged.append(dict(r))
-
-    return merged
-
-
 def segment_session(
     session_dir: Path,
     output_dir: Path | None = None,
-    aggressiveness: int = _VAD_CONFIG["aggressiveness"],
-    frame_duration_ms: int = _VAD_CONFIG["frame_duration_ms"],
-    silence_frames: int = _VAD_CONFIG["silence_frames"],
-    min_segment_sec: float = 0.3,
 ) -> Path:
-    """Segment all WAVs in session_dir/audio/ and write CSV + clips.
+    """Segment all WAVs in session_dir/audio/ using events.csv GO cues.
 
     Returns the path to the CSV that was written.
     """
     session_dir = Path(session_dir)
     audio_dir = session_dir / "audio"
+    events_csv = session_dir / "events.csv"
+
     if not audio_dir.is_dir():
         raise FileNotFoundError(f"No audio/ folder in {session_dir}")
+    if not events_csv.exists():
+        raise FileNotFoundError(f"No events.csv in {session_dir}")
 
-    wav_files = sorted(audio_dir.glob("*.wav"))
-    if not wav_files:
-        logger.warning("No .wav files found in %s", audio_dir)
+    go_segments = _extract_go_segments(events_csv)
+    if not go_segments:
+        logger.warning("No go_cue events found in %s", events_csv)
         return Path()
 
     if output_dir is None:
@@ -224,46 +202,54 @@ def segment_session(
     rows: list[dict[str, Any]] = []
     global_idx = 0
 
-    for wav_path in wav_files:
-        logger.info("Processing %s", wav_path.name)
-        segments = find_speech_segments(
-            wav_path,
-            aggressiveness=aggressiveness,
-            frame_duration_ms=frame_duration_ms,
-            silence_frames=silence_frames,
-            min_segment_sec=min_segment_sec,
-        )
-        if not segments:
-            logger.info("  -> no speech segments found")
+    for trial_id, segments in go_segments.items():
+        wav_path = _resolve_wav(audio_dir, trial_id)
+        if wav_path is None:
+            logger.warning("No WAV found for trial %s in %s", trial_id, audio_dir)
             continue
 
-        samples, rate = read_wav(wav_path)
-        samples = resample_to_16k(samples, rate)
+        logger.info("Processing %s (%d segments)", wav_path.name, len(segments))
+        samples, rate = _read_wav(wav_path)
+        samples = _resample_to_16k(samples, rate)
         rate = TARGET_SAMPLE_RATE
+        duration_sec = len(samples) / float(rate)
 
-        for seg_idx, seg in enumerate(segments, start=1):
+        for seg in segments:
             global_idx += 1
-            s0 = max(0, int(round(seg["start_sec"] * rate)))
-            s1 = min(len(samples), int(round(seg["end_sec"] * rate)))
+            start_sec = max(0.0, seg["start_sec"])
+            end_sec = min(duration_sec, seg["end_sec"])
+            if end_sec <= start_sec:
+                logger.warning(
+                    "Skipping empty/invalid segment %d for %s (%.3f - %.3f)",
+                    seg["segment_index"],
+                    wav_path.name,
+                    start_sec,
+                    end_sec,
+                )
+                continue
+
+            s0 = int(round(start_sec * rate))
+            s1 = int(round(end_sec * rate))
             clip = samples[s0:s1]
 
             out_name = f"segment_{global_idx:04d}.wav"
             out_path = output_dir / out_name
-            write_wav(out_path, clip, rate)
+            _write_wav(out_path, clip, rate)
 
             rows.append(
                 {
                     "source_file": wav_path.name,
-                    "segment_index": seg_idx,
+                    "trial_instance_id": trial_id,
+                    "segment_index": seg["segment_index"],
                     "segment_filename": out_name,
-                    "start_sec": seg["start_sec"],
-                    "end_sec": seg["end_sec"],
-                    "duration_sec": seg["duration_sec"],
-                    "temperature_celsius": "",
+                    "start_sec": round(start_sec, 3),
+                    "end_sec": round(end_sec, 3),
+                    "duration_sec": round(end_sec - start_sec, 3),
+                    "temperature_celsius": seg["temperature_celsius"],
                 }
             )
             logger.info(
-                "  -> %s (%.3f s)", out_name, seg["duration_sec"]
+                "  -> %s (%.3f s)", out_name, end_sec - start_sec
             )
 
     csv_path = output_dir / "segments.csv"
@@ -281,7 +267,7 @@ def segment_session(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Slice session audio into individual speech segments for ML."
+        description="Slice session audio into individual GO segments for ML."
     )
     parser.add_argument(
         "participant_id",
@@ -306,32 +292,6 @@ def main(argv: list[str] | None = None) -> int:
         help="If multiple sessions exist, pick this session number (e.g. 01).",
     )
     parser.add_argument(
-        "--aggressiveness",
-        type=int,
-        default=_VAD_CONFIG["aggressiveness"],
-        choices=[0, 1, 2, 3],
-        help=f"WebRTC VAD aggressiveness (default: {_VAD_CONFIG['aggressiveness']})",
-    )
-    parser.add_argument(
-        "--frame-duration-ms",
-        type=int,
-        default=_VAD_CONFIG["frame_duration_ms"],
-        choices=[10, 20, 30],
-        help=f"VAD frame duration in ms (default: {_VAD_CONFIG['frame_duration_ms']})",
-    )
-    parser.add_argument(
-        "--silence-frames",
-        type=int,
-        default=_VAD_CONFIG["silence_frames"],
-        help=f"Consecutive silent frames to end speech (default: {_VAD_CONFIG['silence_frames']})",
-    )
-    parser.add_argument(
-        "--min-segment-sec",
-        type=float,
-        default=0.3,
-        help="Minimum segment duration in seconds (default: 0.3)",
-    )
-    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -346,7 +306,6 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%H:%M:%S",
     )
 
-    # 1. Find matching session dirs
     sessions = _find_session_dirs(args.data_dir, args.participant_id)
     if not sessions:
         logger.error(
@@ -356,7 +315,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    # 2. If multiple sessions, optionally filter by --session
     if len(sessions) > 1 and args.session:
         filtered = [s for s in sessions if f"session-{args.session}" in s.name.lower()]
         if filtered:
@@ -372,14 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Processing session: %s", session_dir)
 
     try:
-        csv_path = segment_session(
-            session_dir,
-            output_dir=args.output_dir,
-            aggressiveness=args.aggressiveness,
-            frame_duration_ms=args.frame_duration_ms,
-            silence_frames=args.silence_frames,
-            min_segment_sec=args.min_segment_sec,
-        )
+        csv_path = segment_session(session_dir, output_dir=args.output_dir)
         if csv_path.exists():
             print(f"Segments written to: {csv_path.parent}")
             print(f"CSV catalog: {csv_path}")
