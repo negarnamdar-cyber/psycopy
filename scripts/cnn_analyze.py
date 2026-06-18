@@ -41,6 +41,15 @@ from typing import Any
 
 import numpy as np
 
+# Optional plotting (install matplotlib if you want PNG figures)
+try:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+except Exception:  # pragma: no cover
+    plt = None  # type: ignore[assignment]
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -222,6 +231,206 @@ def _bin_index(val: float, bins: list[tuple[int, int]]) -> int:
     return len(bins) - 1 if val > bins[-1][1] else 0
 
 
+def _bland_altman(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
+    """Bland–Altman agreement statistics (mean diff, 95 % limits of agreement)."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    diff = y_pred - y_true
+    mean_diff = float(np.mean(diff))
+    std_diff = float(np.std(diff, ddof=1))
+    loa_lower = mean_diff - 1.96 * std_diff
+    loa_upper = mean_diff + 1.96 * std_diff
+    return {
+        "mean_diff": round(mean_diff, 4),
+        "std_diff": round(std_diff, 4),
+        "loa_lower": round(loa_lower, 4),
+        "loa_upper": round(loa_upper, 4),
+        "n": len(diff),
+    }
+
+
+def _concordance_correlation_coefficient(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Lin’s concordance correlation coefficient (CCC)."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    if len(y_true) < 2 or np.std(y_true) == 0 or np.std(y_pred) == 0:
+        return float("nan")
+    mean_t = np.mean(y_true)
+    mean_p = np.mean(y_pred)
+    s_t = np.std(y_true, ddof=1)
+    s_p = np.std(y_pred, ddof=1)
+    r = float(np.corrcoef(y_true, y_pred)[0, 1])
+    ccc = (2 * r * s_t * s_p) / (s_t**2 + s_p**2 + (mean_t - mean_p) ** 2)
+    return float(ccc)
+
+
+def _residuals_analysis(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
+    """Summary of prediction residuals (errors)."""
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    err = y_pred - y_true
+    return {
+        "mean_error": round(float(np.mean(err)), 4),
+        "median_error": round(float(np.median(err)), 4),
+        "std_error": round(float(np.std(err, ddof=1)), 4),
+        "min_error": round(float(np.min(err)), 4),
+        "max_error": round(float(np.max(err)), 4),
+        "q1_error": round(float(np.percentile(err, 25)), 4),
+        "q3_error": round(float(np.percentile(err, 75)), 4),
+        "n": len(err),
+    }
+
+
+def _print_confusion_matrix(cm: list[list[int]], bins: list[list[int]]) -> None:
+    """Pretty-print a confusion matrix to stdout."""
+    n_classes = len(cm)
+    max_val = max(max(row) for row in cm)
+    col_width = max(5, len(str(max_val)) + 1)
+    header = "Pred →"
+    print(f"\n{'Confusion matrix':<{col_width + 4}} {header:>{(n_classes * (col_width + 1)) // 2}}")
+    # Bin labels
+    labels = [f"{lo}-{hi}" for lo, hi in bins]
+    print(f"{'True ↓':<{col_width + 4}}", end="")
+    for lbl in labels:
+        print(f"{lbl:>{col_width}}", end=" ")
+    print()
+    for i, row in enumerate(cm):
+        print(f"{labels[i]:<{col_width + 4}}", end="")
+        for val in row:
+            print(f"{val:>{col_width}}", end=" ")
+        print()
+    print()
+
+
+# =============================================================================
+# Plots (optional — requires matplotlib)
+# =============================================================================
+
+
+def _plot_predicted_vs_true(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    labels: list[str],
+    out_path: Path,
+    title_suffix: str = "",
+) -> None:
+    """Scatter of predicted vs true pain with identity line and segment labels."""
+    if plt is None:
+        logger.warning("matplotlib not installed; skipping predicted-vs-true plot")
+        return
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.scatter(y_true, y_pred, c="steelblue", edgecolors="k", zorder=3)
+    # Annotate every point with its segment filename (truncated)
+    for x, y, lbl in zip(y_true, y_pred, labels):
+        short = Path(lbl).stem if len(lbl) > 20 else lbl
+        ax.annotate(short, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=6)
+    lo, hi = 1, 10
+    ax.plot([lo, hi], [lo, hi], "k--", lw=1, label="Perfect agreement")
+    ax.set_xlim(lo, hi)
+    ax.set_ylim(lo, hi)
+    ax.set_xlabel("True pain")
+    ax.set_ylabel("Predicted pain")
+    n = len(y_true)
+    warn = " (small N — interpret with caution)" if n < 10 else ""
+    ax.set_title(f"Predicted vs True Pain{title_suffix}{warn}")
+    ax.legend(loc="upper left")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    logger.info("Wrote predicted-vs-true plot to %s", out_path)
+
+
+def _plot_bland_altman(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    labels: list[str],
+    out_path: Path,
+    title_suffix: str = "",
+) -> None:
+    """Bland–Altman plot (difference vs mean) with 95 % LoA bands."""
+    if plt is None:
+        logger.warning("matplotlib not installed; skipping Bland–Altman plot")
+        return
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    mean = (y_true + y_pred) / 2.0
+    diff = y_pred - y_true
+    mean_diff = float(np.mean(diff))
+    std_diff = float(np.std(diff, ddof=1))
+    loa_lo = mean_diff - 1.96 * std_diff
+    loa_hi = mean_diff + 1.96 * std_diff
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.scatter(mean, diff, c="coral", edgecolors="k", zorder=3)
+    for x, y, lbl in zip(mean, diff, labels):
+        short = Path(lbl).stem if len(lbl) > 20 else lbl
+        ax.annotate(short, (x, y), textcoords="offset points", xytext=(4, 4), fontsize=6)
+    ax.axhline(mean_diff, color="navy", ls="-", lw=1.5, label=f"Mean diff = {mean_diff:.2f}")
+    ax.axhline(loa_lo, color="crimson", ls="--", lw=1, label=f"95 % LoA = {loa_lo:.2f}")
+    ax.axhline(loa_hi, color="crimson", ls="--", lw=1, label=f"95 % LoA = {loa_hi:.2f}")
+    ax.axhline(0, color="gray", ls=":", lw=0.8)
+    ax.set_xlabel("Mean of true & predicted pain")
+    ax.set_ylabel("Predicted − True")
+    n = len(y_true)
+    warn = " (small N — interpret with caution)" if n < 10 else ""
+    ax.set_title(f"Bland–Altman{title_suffix}{warn}")
+    ax.legend(loc="upper right", fontsize="small")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    logger.info("Wrote Bland–Altman plot to %s", out_path)
+
+
+def _plot_confusion_heatmap(
+    cm: list[list[int]],
+    bins: list[list[int]],
+    out_path: Path,
+) -> None:
+    """Confusion matrix heatmap PNG."""
+    if plt is None:
+        logger.warning("matplotlib not installed; skipping confusion heatmap")
+        return
+    cm_arr = np.asarray(cm, dtype=int)
+    labels = [f"{lo}-{hi}" for lo, hi in bins]
+    fig, ax = plt.subplots(figsize=(5, 4))
+    im = ax.imshow(cm_arr, cmap="YlOrRd")
+    ax.set_xticks(np.arange(len(labels)))
+    ax.set_yticks(np.arange(len(labels)))
+    ax.set_xticklabels(labels)
+    ax.set_yticklabels(labels)
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    ax.set_title("Confusion Matrix")
+    # Annotate cells
+    for i in range(cm_arr.shape[0]):
+        for j in range(cm_arr.shape[1]):
+            text = ax.text(j, i, cm_arr[i, j], ha="center", va="center", color="black")
+    fig.colorbar(im, ax=ax, shrink=0.7)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    logger.info("Wrote confusion heatmap to %s", out_path)
+
+
+def _write_worst_predictions(
+    pred_rows: list[dict[str, Any]],
+    out_path: Path,
+    top_k: int = 5,
+) -> None:
+    """Write a CSV of the top-k segments with the largest absolute errors."""
+    if not pred_rows:
+        return
+    rows = sorted(pred_rows, key=lambda r: r.get("abs_error", 0), reverse=True)
+    worst = rows[:top_k]
+    fieldnames = list(worst[0].keys())
+    with open(out_path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows(worst)
+    logger.info("Wrote worst %d predictions to %s", len(worst), out_path)
+
+
 def _regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, Any]:
     y_true = np.asarray(y_true, dtype=float)
     y_pred = np.asarray(y_pred, dtype=float)
@@ -316,6 +525,7 @@ def analyze(
     model_path: Path = DEFAULT_MODEL_PATH,
     stats_path: Path = DEFAULT_STATS_PATH,
     num_bins: int = 3,
+    plots: bool = True,
 ) -> dict[str, Any]:
     """Run the CNN over all rated segments and write predictions + metrics."""
     segments_dir = Path(segments_dir)
@@ -333,6 +543,7 @@ def analyze(
     y_true: list[float] = []
     y_pred: list[float] = []
     modalities: list[str] = []
+    seg_labels: list[str] = []
     n_skipped_no_pain = 0
     n_skipped_no_wav = 0
     max_pain_seen: float | None = None
@@ -363,6 +574,7 @@ def analyze(
         y_true.append(true_pain)
         y_pred.append(pred)
         modalities.append(audio_type)
+        seg_labels.append(seg_name)
 
         pred_rows.append(
             {
@@ -415,13 +627,49 @@ def analyze(
         "n_skipped_no_wav": n_skipped_no_wav,
         "regression": _regression_metrics(y_true_arr, y_pred_arr),
         "classification": _classification_metrics(y_true_arr, y_pred_arr, bins),
+        "bland_altman": _bland_altman(y_true_arr, y_pred_arr),
+        "ccc": round(_concordance_correlation_coefficient(y_true_arr, y_pred_arr), 4),
+        "residuals": _residuals_analysis(y_true_arr, y_pred_arr),
         "by_modality": by_modality,
+        "plot_paths": {},
+        "worst_predictions_path": None,
     }
 
     pred_csv = segments_dir / "cnn_predictions.csv"
     if pred_rows:
         _write_csv(pred_csv, pred_rows)
         logger.info("Wrote %d predictions to %s", len(pred_rows), pred_csv)
+
+    # Write confusion matrix as a standalone CSV
+    cm = report["classification"]["confusion_matrix"]
+    cm_csv = segments_dir / "cnn_confusion_matrix.csv"
+    with open(cm_csv, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        bin_labels = [f"{lo}-{hi}" for lo, hi in bins]
+        writer.writerow(["True \\ Pred"] + bin_labels)
+        for label, row in zip(bin_labels, cm):
+            writer.writerow([label] + row)
+    logger.info("Wrote confusion matrix to %s", cm_csv)
+
+    # Worst-predictions table (always useful, even for small N)
+    worst_csv = segments_dir / "cnn_worst_predictions.csv"
+    _write_worst_predictions(pred_rows, worst_csv, top_k=5)
+    report["worst_predictions_path"] = str(worst_csv)
+
+    # Optional figures
+    if plots and n_eval > 0:
+        plot_dir = segments_dir
+        pvst_png = plot_dir / "cnn_predicted_vs_true.png"
+        ba_png = plot_dir / "cnn_bland_altman.png"
+        cm_png = plot_dir / "cnn_confusion_heatmap.png"
+        _plot_predicted_vs_true(y_true_arr, y_pred_arr, seg_labels, pvst_png)
+        _plot_bland_altman(y_true_arr, y_pred_arr, seg_labels, ba_png)
+        _plot_confusion_heatmap(cm, bins, cm_png)
+        report["plot_paths"] = {
+            "predicted_vs_true": str(pvst_png),
+            "bland_altman": str(ba_png),
+            "confusion_heatmap": str(cm_png),
+        }
 
     report_path = segments_dir / "cnn_accuracy.json"
     with open(report_path, "w", encoding="utf-8") as fh:
@@ -476,6 +724,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Number of contiguous pain bins for classification (default: 3).",
     )
     parser.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip generating PNG plots (default: plots are generated).",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -515,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
             model_path=args.model,
             stats_path=args.stats,
             num_bins=args.num_bins,
+            plots=not args.no_plots,
         )
     except Exception as exc:
         logger.error("Failed: %s", exc)
@@ -522,18 +776,32 @@ def main(argv: list[str] | None = None) -> int:
 
     reg = report["regression"]
     clf = report["classification"]
+    ba = report["bland_altman"]
+    ccc = report["ccc"]
+    resid = report["residuals"]
+    n_eval = report["n_evaluated"]
     print()
     print(f"Segments dir : {segments_dir}")
-    print(f"Evaluated    : {report['n_evaluated']}/{report['n_segments']} "
+    print(f"Evaluated    : {n_eval}/{report['n_segments']} "
           f"(skipped {report['n_skipped_no_pain']} unrated, "
           f"{report['n_skipped_no_wav']} missing WAV)")
+    if n_eval < 10:
+        print("WARNING      : Only %d segments evaluated. Metrics may be unstable; "
+              "do not over-interpret." % n_eval)
     print(f"MAE          : {reg['mae']}")
     print(f"RMSE         : {reg['rmse']}")
     print(f"R^2          : {reg['r2']}")
     print(f"Pearson r    : {reg['pearson_r']}")
+    print(f"CCC          : {ccc}")
     print(f"Within +/-1  : {reg['within_1']:.1%}")
     print(f"Within +/-2  : {reg['within_2']:.1%}")
     print(f"Class acc    : {clf['accuracy']:.1%} over {len(clf['bins'])} bins")
+    print(f"Bland-Altman : mean_diff={ba['mean_diff']}, "
+          f"95%% LoA=[{ba['loa_lower']}, {ba['loa_upper']}]")
+    print(f"Residuals    : mean={resid['mean_error']}, median={resid['median_error']}, "
+          f"std={resid['std_error']}, range=[{resid['min_error']}, {resid['max_error']}]")
+
+    _print_confusion_matrix(clf["confusion_matrix"], clf["bins"])
 
     by_mod = report.get("by_modality", {})
     if len(by_mod) > 1 or (len(by_mod) == 1 and "unknown" not in by_mod):
@@ -546,7 +814,15 @@ def main(argv: list[str] | None = None) -> int:
                   f"acc={mc['accuracy']:.1%}")
 
     print(f"Predictions  : {segments_dir / 'cnn_predictions.csv'}")
+    print(f"Worst preds  : {segments_dir / 'cnn_worst_predictions.csv'}")
+    print(f"Confusion    : {segments_dir / 'cnn_confusion_matrix.csv'}")
     print(f"Report       : {segments_dir / 'cnn_accuracy.json'}")
+
+    plot_paths = report.get("plot_paths", {})
+    if plot_paths:
+        print("Plots        :")
+        for name, pth in plot_paths.items():
+            print(f"  {name:<20} {pth}")
     return 0
 
 
