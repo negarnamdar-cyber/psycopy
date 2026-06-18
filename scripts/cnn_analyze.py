@@ -129,6 +129,12 @@ def _wav_to_logmel(
     )
     S_db = librosa.power_to_db(S, ref=np.max)
 
+    # Defensive: replace any non-finite values (e.g. from fully-silent clips)
+    # with the pad floor. Normally a no-op since power_to_db clamps via its
+    # default top_db=80, but keeps the model from ever seeing NaN/inf.
+    if not np.all(np.isfinite(S_db)):
+        S_db = np.nan_to_num(S_db, nan=pad_value, posinf=pad_value, neginf=pad_value)
+
     # Front-truncate or right-pad along the time axis (axis=1) to max_frames.
     frames = S_db.shape[1]
     if frames > max_frames:
@@ -326,6 +332,7 @@ def analyze(
     pred_rows: list[dict[str, Any]] = []
     y_true: list[float] = []
     y_pred: list[float] = []
+    modalities: list[str] = []
     n_skipped_no_pain = 0
     n_skipped_no_wav = 0
     max_pain_seen: float | None = None
@@ -351,14 +358,17 @@ def analyze(
             logger.warning("Missing WAV: %s", wav_path.name)
             continue
 
+        audio_type = (row.get("audio_type") or "").strip() or "unknown"
         pred = predict_pain(model, wav_path, mean, std)
         y_true.append(true_pain)
         y_pred.append(pred)
+        modalities.append(audio_type)
 
         pred_rows.append(
             {
                 "segment_filename": seg_name,
                 "trial_instance_id": row.get("trial_instance_id", ""),
+                "audio_type": audio_type,
                 "segment_index": row.get("segment_index", ""),
                 "true_pain": round(true_pain, 2),
                 "predicted_pain": round(pred, 2),
@@ -382,6 +392,20 @@ def analyze(
     y_true_arr = np.array(y_true, dtype=float)
     y_pred_arr = np.array(y_pred, dtype=float)
 
+    # Per-modality breakdown (vowel vs speech) so you can see whether the
+    # CNN generalizes across both audio types.
+    by_modality: dict[str, Any] = {}
+    mod_set = sorted(set(modalities))
+    for mod in mod_set:
+        idx = [i for i, m in enumerate(modalities) if m == mod]
+        yt = y_true_arr[idx]
+        yp = y_pred_arr[idx]
+        by_modality[mod] = {
+            "n": len(idx),
+            "regression": _regression_metrics(yt, yp),
+            "classification": _classification_metrics(yt, yp, bins),
+        }
+
     report: dict[str, Any] = {
         "segments_dir": str(segments_dir),
         "model_path": str(model_path),
@@ -391,6 +415,7 @@ def analyze(
         "n_skipped_no_wav": n_skipped_no_wav,
         "regression": _regression_metrics(y_true_arr, y_pred_arr),
         "classification": _classification_metrics(y_true_arr, y_pred_arr, bins),
+        "by_modality": by_modality,
     }
 
     pred_csv = segments_dir / "cnn_predictions.csv"
@@ -509,6 +534,17 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Within +/-1  : {reg['within_1']:.1%}")
     print(f"Within +/-2  : {reg['within_2']:.1%}")
     print(f"Class acc    : {clf['accuracy']:.1%} over {len(clf['bins'])} bins")
+
+    by_mod = report.get("by_modality", {})
+    if len(by_mod) > 1 or (len(by_mod) == 1 and "unknown" not in by_mod):
+        print("By modality  :")
+        for mod, mstats in by_mod.items():
+            mr = mstats["regression"]
+            mc = mstats["classification"]
+            print(f"  {mod:<8} n={mstats['n']:<4} "
+                  f"MAE={mr['mae']:<6} r={mr['pearson_r']:<6} "
+                  f"acc={mc['accuracy']:.1%}")
+
     print(f"Predictions  : {segments_dir / 'cnn_predictions.csv'}")
     print(f"Report       : {segments_dir / 'cnn_accuracy.json'}")
     return 0

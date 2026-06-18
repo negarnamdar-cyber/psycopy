@@ -12,11 +12,12 @@ using the go_cue timestamps from events.csv.
             segment_0001.wav
             segment_0002.wav
             ...
-        segments.csv   (columns: source_file, trial_instance_id, segment_index,
-                        segment_filename, start_sec, end_sec, duration_sec,
-                        temperature_celsius, pain)
+        segments.csv   (columns: source_file, trial_instance_id, audio_type,
+                        segment_index, segment_filename, start_sec, end_sec,
+                        duration_sec, temperature_celsius, pain)
 
     `temperature_celsius` is auto-filled from the GO-cue event data.
+    `audio_type` is auto-filled ('vowel' or 'speech') from recording_start events.
     `pain` is left BLANK — fill it in manually with a 1-10 pain rating per
     segment before running scripts/cnn_analyze.py.
 """
@@ -83,7 +84,7 @@ def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
     """Parse events.csv and return GO segments per trial_instance_id.
 
     Each segment has:
-        segment_index, start_sec, end_sec, duration_sec, pain
+        segment_index, start_sec, end_sec, duration_sec, temperature_celsius, pain
     """
     events = _load_events_csv(events_csv)
     go_segments: dict[str, list[dict[str, Any]]] = {}
@@ -120,6 +121,25 @@ def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
         go_segments[trial_id].sort(key=lambda x: x["segment_index"])
 
     return go_segments
+
+
+def _load_trial_audio_types(events_csv: Path) -> dict[str, str]:
+    """Map trial_instance_id -> audio_type ('vowel' or 'speech').
+
+    Reads `recording_start` events, whose event_data carries the audio_type
+    emitted by the experiment runtime (psycopy/medoc_experiment.py).
+    """
+    events = _load_events_csv(events_csv)
+    types: dict[str, str] = {}
+    for row in events:
+        if row.get("event_type") != "recording_start":
+            continue
+        trial_id = row.get("trial_instance_id", "").strip()
+        if not trial_id:
+            continue
+        data = _parse_event_data(row.get("event_data", ""))
+        types[trial_id] = data.get("audio_type", "vowel")
+    return types
 
 
 def _resolve_wav(audio_dir: Path, trial_instance_id: str) -> Path | None:
@@ -199,6 +219,8 @@ def segment_session(
         logger.warning("No go_cue events found in %s", events_csv)
         return Path()
 
+    audio_types = _load_trial_audio_types(events_csv)
+
     if output_dir is None:
         output_dir = Path(str(session_dir) + "_segments")
     output_dir = Path(output_dir)
@@ -245,6 +267,7 @@ def segment_session(
                 {
                     "source_file": wav_path.name,
                     "trial_instance_id": trial_id,
+                    "audio_type": audio_types.get(trial_id, "vowel"),
                     "segment_index": seg["segment_index"],
                     "segment_filename": out_name,
                     "start_sec": round(start_sec, 3),
