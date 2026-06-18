@@ -7,14 +7,18 @@ Looks in data/ for session folder(s) matching the participant,
 then slices every WAV in the session's audio/ folder into GO segments
 using the go_cue timestamps from events.csv.
 
-Produces:
-    data/..._segments/
-        segment_0001.wav
-        segment_0002.wav
-        ...
-    segments.csv   (columns: source_file, trial_instance_id, segment_index,
-                    segment_filename, start_sec, end_sec, duration_sec,
-                    pain)
+    Produces:
+        data/..._segments/
+            segment_0001.wav
+            segment_0002.wav
+            ...
+        segments.csv   (columns: source_file, trial_instance_id, segment_index,
+                        segment_filename, start_sec, end_sec, duration_sec,
+                        temperature_celsius, pain)
+
+    `temperature_celsius` is auto-filled from the GO-cue event data.
+    `pain` is left BLANK — fill it in manually with a 1-10 pain rating per
+    segment before running scripts/cnn_analyze.py.
 """
 
 from __future__ import annotations
@@ -106,7 +110,8 @@ def _extract_go_segments(events_csv: Path) -> dict[str, list[dict[str, Any]]]:
                 "start_sec": round(float(elapsed), 3),
                 "end_sec": round(float(elapsed) + float(duration), 3),
                 "duration_sec": round(float(duration), 3),
-                "pain": temp if temp is not None else "",
+                "temperature_celsius": temp if temp is not None else "",
+                "pain": "",
             }
         )
 
@@ -245,6 +250,7 @@ def segment_session(
                     "start_sec": round(start_sec, 3),
                     "end_sec": round(end_sec, 3),
                     "duration_sec": round(end_sec - start_sec, 3),
+                    "temperature_celsius": seg["temperature_celsius"],
                     "pain": seg["pain"],
                 }
             )
