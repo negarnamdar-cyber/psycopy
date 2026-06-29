@@ -1,0 +1,6 @@
+"segment_filename","trial_instance_id","audio_type","segment_index","true_pain","predicted_pain","abs_error","temperature_celsius","duration_sec"
+"segment_0025.wav","007_01_block1_000","unknown","4","1.0","10.0","9.0","","4.2"
+"segment_0034.wav","007_01_block1_000","unknown","13","1.0","10.0","9.0","","4.58"
+"segment_0083.wav","007_01_block3_000","unknown","21","2.0","10.0","8.0","","3.88"
+"segment_0052.wav","007_01_block2_000","unknown","11","1.0","8.56","7.56","","4.4"
+"segment_0030.wav","007_01_block1_000","unknown","9","1.0","8.5","7.5","","3.96"

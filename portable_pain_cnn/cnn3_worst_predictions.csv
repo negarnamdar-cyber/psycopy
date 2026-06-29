@@ -1,0 +1,6 @@
+"segment_filename","trial_instance_id","audio_type","segment_index","true_pain","true_class","predicted_class","prob_low","prob_medium","prob_high","max_prob","correct","temperature_celsius","duration_sec"
+"segment_0068.wav","007_01_block3_000","unknown","6","7.0","medium","low","0.9998","0.0","0.0001","0.9998","False","","3.48"
+"segment_0027.wav","007_01_block1_000","unknown","6","1.0","low","medium","0.0027","0.9839","0.0134","0.9839","False","","5.89"
+"segment_0061.wav","007_01_block2_000","unknown","20","7.0","medium","low","0.97","0.0043","0.0256","0.97","False","","5.35"
+"segment_0057.wav","007_01_block2_000","unknown","16","7.0","medium","low","0.9655","0.0088","0.0257","0.9655","False","","3.34"
+"segment_0030.wav","007_01_block1_000","unknown","9","1.0","low","medium","0.0164","0.9425","0.0411","0.9425","False","","3.96"

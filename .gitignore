@@ -47,7 +47,6 @@ Thumbs.db
 /data/
 /data/**
 *.wav
-*.csv
 *.json
 !stimuli.csv
 !psycopy/stimuli.csv
