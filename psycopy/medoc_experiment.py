@@ -13,17 +13,19 @@ Two experiment modes are supported:
     - Total experiment time: ~20 minutes
 
  2. Speech mode (SPEECH):
-    - Structured Q&A with thermal stimulation
-    - Always 4 blocks, each a 4-minute trial
-    - Each block contains 8 questions (32 total); each question lasts exactly 30 s
-      (7--13 s READ + 17--23 s ANSWER) so that 1-minute Medoc temperature
-      steps fall between questions, never during one
-    - Per question: 7--13 s READ (STOP, question shown) +
-      17--23 s ANSWER (GO, screen turns green)
-    - No final rest needed because 8 x 30 s = 240 s
-    - 1-minute break between blocks
-    - Questions are configurable via ``ExperimentConfig.speech_questions``
-    - Extras beyond 32 are truncated (no recycling)
+     - Structured Q&A with thermal stimulation
+     - Always 4 blocks, each a 4-minute trial
+     - Each block contains 8 questions (32 total); each question cycle lasts
+       exactly 30 s so that 1-minute Medoc temperature steps fall between
+       questions, never during a GO (speaking) period:
+         10 s READ (STOP, question shown)
+         + 5 s "Rate your pain" prompt (STOP)
+         + 15 s ANSWER (GO, screen turns green)
+     - Pause (STOP) periods total 15 s (longer); GO speaking is 15 s (shorter)
+     - No final rest needed because 8 x 30 s = 240 s
+     - 1-minute break between blocks
+     - Questions are configurable via ``ExperimentConfig.speech_questions``
+     - Extras beyond 32 are truncated (no recycling)
 """
 
 from __future__ import annotations
@@ -55,6 +57,16 @@ TRIAL_DURATION_SEC = 240.0
 BLOCK_BREAK_SEC = 60.0
 SPEECH_MAX_FINAL_REST_SEC = 30.0
 VOWEL_TEXT = "Ahh"
+
+# Speech Q&A timing (constant -- no randomization).  The three values sum to
+# 30 s, so 8 questions fill a 240 s block and 1-minute Medoc temperature steps
+# land on cycle boundaries (between questions), never inside a GO speaking
+# period.  Pause (STOP) periods total 15 s (longer); GO speaking is 15 s
+# (shorter).
+SPEECH_READ_SEC = 10.0
+SPEECH_RATE_PAIN_SEC = 5.0
+SPEECH_ANSWER_SEC = 15.0
+RATE_PAIN_TEXT = "Rate your pain"
 
 logger = logging.getLogger("psycopy.medoc_experiment")
 
@@ -115,6 +127,9 @@ class MedocExperiment:
                 questions=list(config.speech_questions),
                 num_blocks=num_blocks,
                 rng=self.rng,
+                read_duration=SPEECH_READ_SEC,
+                rate_pain_duration=SPEECH_RATE_PAIN_SEC,
+                answer_duration=SPEECH_ANSWER_SEC,
             )
         else:
             self.trials = generate_trials(
@@ -280,8 +295,29 @@ class MedocExperiment:
                     if trial_config.task_type == "speech" and seg_idx < len(trial_config.segment_texts)
                     else VOWEL_TEXT
                 )
-                self._display_state(TaskState.STOP, stop_text)
-                self.ui.wait(stop_duration)
+                if trial_config.task_type == "speech":
+                    # STOP = read the question, then a "Rate your pain" prompt.
+                    # Total STOP time = read + pain == stop_duration (15 s), so
+                    # the 30 s cycle / temperature alignment is preserved.
+                    self._display_state(TaskState.STOP, stop_text)
+                    self.ui.wait(trial_config.speech_read_duration)
+                    self.event_logger.log(
+                        event_type="rate_pain_prompt",
+                        trial_instance_id=trial_instance_id,
+                        block=f"block{set_num}",
+                        event_data={
+                            "segment_index": seg_idx,
+                            "cue_type": "rate_pain",
+                            "duration_sec": round(trial_config.speech_rate_pain_duration, 3),
+                            "trial_elapsed_sec": round(time.monotonic() - trigger_timestamp, 3),
+                            "temperature_celsius": current_temperature,
+                        },
+                    )
+                    self.ui.show_rate_pain_prompt()
+                    self.ui.wait(trial_config.speech_rate_pain_duration)
+                else:
+                    self._display_state(TaskState.STOP, stop_text)
+                    self.ui.wait(stop_duration)
 
                 # --- Poll during STOP if interval hit ----------------------
                 elapsed = time.monotonic() - trigger_timestamp

@@ -303,7 +303,8 @@ class PsychoPyUI:
         instructions = (
             "SPEECH Q&A TASK\n\n"
             "A question will appear on screen.\n"
-            "When the screen turns GREEN, you have 17–23 seconds to answer.\n"
+            "You will then see a 'Rate your pain' prompt.\n"
+            "When the screen turns GREEN, you have 15 seconds to answer.\n"
             "Stop speaking when the screen turns RED.\n\n"
         )
         if medoc_enabled:
@@ -323,6 +324,26 @@ class PsychoPyUI:
         self.pain_warning.draw()
         self.win.flip()
         self.wait_for_space()
+
+    def show_rate_pain_prompt(self) -> None:
+        """Display a prominent 'Rate your pain' prompt on the STOP background.
+
+        Shown during the pause (STOP) period of a speech question cycle.  The
+        last flipped frame persists for the caller-controlled duration; this
+        method restores the default sentence styling so later ``_display_state``
+        calls are unaffected.
+        """
+        self.apply_state(TaskState.STOP)
+        self.sentence_text.text = "Rate your pain"
+        self.sentence_text.height = 0.1
+        self.sentence_text.pos = (0, 0.05)
+        self.sentence_text.draw()
+        self.state_background.draw()
+        self.state_indicator.draw()
+        self.win.flip()
+        # Restore default sentence styling used elsewhere.
+        self.sentence_text.height = 0.06
+        self.sentence_text.pos = (0, 0.25)
 
     def show_fixation(self, duration: float = 0.5) -> None:
         self.fixation.draw()

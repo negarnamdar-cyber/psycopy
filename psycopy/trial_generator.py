@@ -28,6 +28,11 @@ class TrialConfig:
             durations (seconds).  Empty means "calculate automatically"
             (used by vowel mode).  When provided, the final STOP fills
             the remainder of the 240-second trial.
+        speech_read_duration: For speech mode, the constant question-read
+            (STOP) sub-duration in seconds.  The STOP segment is split into
+            this read window plus the rate-pain popup.  Zero for vowel mode.
+        speech_rate_pain_duration: For speech mode, the constant "Rate your
+            pain" popup (STOP) sub-duration in seconds.  Zero for vowel mode.
     """
 
     task_type: str
@@ -35,6 +40,8 @@ class TrialConfig:
     go_segment_durations: tuple[float, ...]
     segment_texts: tuple[str, ...] = ()
     stop_segment_durations: tuple[float, ...] = ()
+    speech_read_duration: float = 0.0
+    speech_rate_pain_duration: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -48,6 +55,8 @@ class TrialConfig:
             and self.go_segment_durations == other.go_segment_durations
             and self.segment_texts == other.segment_texts
             and self.stop_segment_durations == other.stop_segment_durations
+            and self.speech_read_duration == other.speech_read_duration
+            and self.speech_rate_pain_duration == other.speech_rate_pain_duration
         )
 
     def __hash__(self) -> int:
@@ -58,6 +67,8 @@ class TrialConfig:
                 self.go_segment_durations,
                 self.segment_texts,
                 self.stop_segment_durations,
+                self.speech_read_duration,
+                self.speech_rate_pain_duration,
             )
         )
 
@@ -156,35 +167,43 @@ def generate_speech_trials(
     questions: list[str],
     rng: random.Random,
     num_blocks: int = 4,
-    min_read: float = 7.0,
-    max_read: float = 13.0,
-    min_answer: float = 17.0,
-    max_answer: float = 23.0,
+    read_duration: float = 10.0,
+    rate_pain_duration: float = 5.0,
+    answer_duration: float = 15.0,
+    trial_duration_sec: float = 240.0,
 ) -> list[list[TrialConfig]]:
-    """Generate speech Q&A trial schedule.
+    """Generate speech Q&A trial schedule with constant per-question timing.
 
-    Each block is a 240-second trial made of:
+    Each block is a ``trial_duration_sec``-second trial (default 240 s) made of
+    identical 30-second question cycles:
 
-        READ (STOP, 7--13 s)  ->  ANSWER (GO, 17--23 s)  ->  repeat ...
+        READ (STOP, question shown)          ->  ``read_duration`` s  (default 10)
+        "Rate your pain" prompt (STOP)      ->  ``rate_pain_duration`` s (default 5)
+        ANSWER (GO, screen turns green)      ->  ``answer_duration`` s  (default 15)
 
-    Each question is pinned to 30 s total so that 8 questions fill the block
-    and 1-minute Medoc temperature steps fall between questions, never during
-    one.  No final rest period is needed.
+    Pause (STOP) periods therefore total 15 s (longer) and the GO speaking
+    period is 15 s (shorter).  Durations are constant -- there is no
+    randomization.
 
-    The session is always exactly ``num_blocks`` blocks (default 4).  If you
-    supply more questions than fit, extras are truncated (no recycling).  If
-    you supply fewer, they are spread evenly across the 4 blocks.
+    The Medoc thermode changes temperature every 60 s.  Each cycle must divide
+    60 s evenly so that temperature steps land exactly on cycle boundaries
+    (between questions) and never inside a GO speaking period.  With the
+    default 10 + 5 + 15 = 30 s cycle, 8 questions fill a 240 s block and the
+    60 s / 120 s / 180 s temperature steps fall between questions, so the
+    temperature never changes while the participant is speaking.
 
-    With the default bounds, **~32 questions is the sweet spot** (8 per block).
+    The session is always exactly ``num_blocks`` blocks (default 4).  Extra
+    questions beyond what fits are truncated (no recycling); fewer questions
+    are spread evenly across the blocks.
 
     Args:
         questions: List of question strings.  Easily swappable by the caller.
-        rng: Seeded Random instance for reproducibility.
+        rng: Seeded Random instance for question shuffling/reproducibility.
         num_blocks: Number of blocks (default 4 for a ~20 min session).
-        min_read: Minimum question-read time in seconds (default 7).
-        max_read: Maximum question-read time in seconds (default 13).
-        min_answer: Minimum answer time in seconds (unused; computed as 30 - read).
-        max_answer: Maximum answer time in seconds (unused; computed as 30 - read).
+        read_duration: Constant question-read (STOP) time in seconds.
+        rate_pain_duration: Constant "Rate your pain" prompt (STOP) time in seconds.
+        answer_duration: Constant answer (GO) time in seconds.
+        trial_duration_sec: Total trial/block length in seconds (default 240).
 
     Returns:
         List of blocks, each block is a list of one TrialConfig.
@@ -192,23 +211,29 @@ def generate_speech_trials(
     if not questions:
         questions = ["Please speak freely."]
 
-    # Target: 32 questions / 4 blocks = 8 per block.
-    # Each question is pinned to 30 s total (read + answer = 30) so that
-    # temperature steps at 1-minute boundaries never fall inside a question.
-    #   8 * 30 = 240 s  =>  no final rest needed.
-    max_per_block = 8
+    cycle_sec = round(read_duration + rate_pain_duration + answer_duration, 6)
+    if cycle_sec <= 0:
+        raise ValueError("Speech cycle length must be positive.")
+    # The cycle must divide 60 s so Medoc temperature steps (every 60 s) land
+    # on cycle boundaries instead of inside a GO speaking period.
+    if abs(60.0 % cycle_sec) > 1e-6:
+        raise ValueError(
+            f"Speech cycle length ({cycle_sec}s) must divide 60s evenly so "
+            "Medoc temperature steps never fall inside a GO speaking period."
+        )
 
-    # Always produce exactly ``num_blocks`` blocks (default 4)
+    max_per_block = max(1, int(round(trial_duration_sec / cycle_sec)))
+    stop_per_q = round(read_duration + rate_pain_duration, 6)
+    answer_per_q = round(answer_duration, 6)
+
     total_q = len(questions)
     qpb = total_q // num_blocks  # floor
     remainder = total_q % num_blocks
 
-    # First ``remainder`` blocks get one extra question
     block_counts = [
         min(max_per_block, qpb + (1 if i < remainder else 0))
         for i in range(num_blocks)
     ]
-    # Truncate if total would exceed available questions
     used = 0
     final_counts: list[int] = []
     for c in block_counts:
@@ -218,30 +243,14 @@ def generate_speech_trials(
         final_counts.append(actual)
         used += actual
 
-    # If somehow we ended up with fewer blocks (e.g. < 4 questions),
-    # pad with single-question blocks so we always hit num_blocks
     while len(final_counts) < num_blocks and used < total_q:
         final_counts.append(1)
         used += 1
     while len(final_counts) < num_blocks:
-        final_counts.append(1)  # will recycle the last question as fallback
+        final_counts.append(1)  # recycle the last question as fallback
 
-    # Shuffle question order once, then slice into blocks
     shuffled = list(questions)
     rng.shuffle(shuffled)
-
-    def _fit_durations(n: int) -> tuple[tuple[float, ...], tuple[float, ...]]:
-        """Generate n read durations and n answer durations.
-
-        Returns (read_durs, answer_durs).  Durations are paired by index so
-        each question keeps its matched read / answer times (no independent
-        shuffling).  Each pair sums to exactly 30 s so that 8 questions fill
-        a 240-second block and 1-minute Medoc temperature steps land between
-        questions, never during one.
-        """
-        reads = [round(rng.uniform(min_read, max_read), 2) for _ in range(n)]
-        answers = [round(30.0 - r, 2) for r in reads]
-        return tuple(reads), tuple(answers)
 
     all_blocks: list[list[TrialConfig]] = []
     idx = 0
@@ -252,15 +261,18 @@ def generate_speech_trials(
             block_qs = [shuffled[-1] if shuffled else "Please speak freely."]
             n = 1
 
-        read_durs, answer_durs = _fit_durations(n)
+        stop_durs = tuple(stop_per_q for _ in range(n))
+        go_durs = tuple(answer_per_q for _ in range(n))
         all_blocks.append(
             [
                 TrialConfig(
                     task_type="speech",
                     num_go_segments=n,
-                    go_segment_durations=answer_durs,
+                    go_segment_durations=go_durs,
                     segment_texts=tuple(block_qs),
-                    stop_segment_durations=read_durs,
+                    stop_segment_durations=stop_durs,
+                    speech_read_duration=read_duration,
+                    speech_rate_pain_duration=rate_pain_duration,
                 )
             ]
         )
