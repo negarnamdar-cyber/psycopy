@@ -283,8 +283,8 @@ class PsychoPyUI:
         instructions = (
             "SPEECH Q&A TASK\n\n"
             "A question will appear on screen.\n"
-            "You will then see a 'Rate your pain' prompt.\n"
             "When the screen turns GREEN, you have 15 seconds to answer.\n"
+            "After you speak, a 'Rate your pain' prompt will appear.\n"
             "Stop speaking when the screen turns RED.\n\n"
         )
         if medoc_enabled:

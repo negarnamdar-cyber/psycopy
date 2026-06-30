@@ -178,8 +178,8 @@ def generate_speech_trials(
     identical 30-second question cycles:
 
         READ (STOP, question shown)          ->  ``read_duration`` s  (default 10)
-        "Rate your pain" prompt (STOP)      ->  ``rate_pain_duration`` s (default 5)
         ANSWER (GO, screen turns green)      ->  ``answer_duration`` s  (default 15)
+        "Rate your pain" prompt (STOP)      ->  ``rate_pain_duration`` s (default 5)
 
     Pause (STOP) periods therefore total 15 s (longer) and the GO speaking
     period is 15 s (shorter).  Durations are constant -- there is no

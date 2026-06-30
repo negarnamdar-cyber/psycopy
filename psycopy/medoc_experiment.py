@@ -15,13 +15,13 @@ Two experiment modes are supported:
  2. Speech mode (SPEECH):
      - Structured Q&A with thermal stimulation
      - Always 4 blocks, each a 4-minute trial
-     - Each block contains 8 questions (32 total); each question cycle lasts
-       exactly 30 s so that 1-minute Medoc temperature steps fall between
-       questions, never during a GO (speaking) period:
-         10 s READ (STOP, question shown)
-         + 5 s "Rate your pain" prompt (STOP)
-         + 15 s ANSWER (GO, screen turns green)
-     - Pause (STOP) periods total 15 s (longer); GO speaking is 15 s (shorter)
+      - Each block contains 8 questions (32 total); each question cycle lasts
+        exactly 30 s so that 1-minute Medoc temperature steps fall between
+        questions, never during a GO (speaking) period:
+          10 s READ (STOP, question shown)
+          + 15 s ANSWER (GO, screen turns green)
+          + 5 s "Rate your pain" prompt (STOP)
+      - Pause (STOP) periods total 15 s (longer); GO speaking is 15 s (shorter)
      - No final rest needed because 8 x 30 s = 240 s
      - 1-minute break between blocks
      - Questions are configurable via ``ExperimentConfig.speech_questions``
@@ -275,7 +275,11 @@ class MedocExperiment:
                         response_code = status.get("response_code")
                     next_poll_at += 5.0
 
-                # Log STOP cue with most recent temperature
+                # Log STOP cue with most recent temperature.
+                # For speech, STOP begins with the question READ; the "Rate your
+                # pain" prompt is shown AFTER speaking (see rate_pain_prompt
+                # below the GO block), so the stop_cue duration here is the read
+                # window only.  Total STOP per question = read + rate pain.
                 stop_cue_ts = time.monotonic()
                 stop_duration = stop_durations[seg_idx]
                 self.event_logger.log(
@@ -285,7 +289,12 @@ class MedocExperiment:
                     event_data={
                         "segment_index": seg_idx,
                         "cue_type": "stop",
-                        "cue_duration_sec": round(stop_duration, 3),
+                        "cue_duration_sec": round(
+                            trial_config.speech_read_duration
+                            if trial_config.task_type == "speech"
+                            else stop_duration,
+                            3,
+                        ),
                         "trial_elapsed_sec": round(stop_cue_ts - trigger_timestamp, 3),
                         "temperature_celsius": current_temperature,
                     },
@@ -296,25 +305,12 @@ class MedocExperiment:
                     else VOWEL_TEXT
                 )
                 if trial_config.task_type == "speech":
-                    # STOP = read the question, then a "Rate your pain" prompt.
-                    # Total STOP time = read + pain == stop_duration (15 s), so
-                    # the 30 s cycle / temperature alignment is preserved.
+                    # STOP = read the question.  Speaking (GO) follows, then the
+                    # "Rate your pain" prompt closes the cycle.  Total STOP time
+                    # per question = read (10 s) + rate pain (5 s) == stop_duration
+                    # (15 s), so the 30 s cycle / temperature alignment is preserved.
                     self._display_state(TaskState.STOP, stop_text)
                     self.ui.wait(trial_config.speech_read_duration)
-                    self.event_logger.log(
-                        event_type="rate_pain_prompt",
-                        trial_instance_id=trial_instance_id,
-                        block=f"block{set_num}",
-                        event_data={
-                            "segment_index": seg_idx,
-                            "cue_type": "rate_pain",
-                            "duration_sec": round(trial_config.speech_rate_pain_duration, 3),
-                            "trial_elapsed_sec": round(time.monotonic() - trigger_timestamp, 3),
-                            "temperature_celsius": current_temperature,
-                        },
-                    )
-                    self.ui.show_rate_pain_prompt()
-                    self.ui.wait(trial_config.speech_rate_pain_duration)
                 else:
                     self._display_state(TaskState.STOP, stop_text)
                     self.ui.wait(stop_duration)
@@ -363,6 +359,24 @@ class MedocExperiment:
                 )
                 self._display_state(TaskState.GO, go_text)
                 self.ui.wait(go_duration)
+
+                # Speech: rate pain AFTER speaking (STOP).  Speaking ends here,
+                # so this prompt doubles as the end-of-speech STOP for the cycle.
+                if trial_config.task_type == "speech":
+                    self.event_logger.log(
+                        event_type="rate_pain_prompt",
+                        trial_instance_id=trial_instance_id,
+                        block=f"block{set_num}",
+                        event_data={
+                            "segment_index": seg_idx,
+                            "cue_type": "rate_pain",
+                            "duration_sec": round(trial_config.speech_rate_pain_duration, 3),
+                            "trial_elapsed_sec": round(time.monotonic() - trigger_timestamp, 3),
+                            "temperature_celsius": current_temperature,
+                        },
+                    )
+                    self.ui.show_rate_pain_prompt()
+                    self.ui.wait(trial_config.speech_rate_pain_duration)
 
                 self.logger.debug(
                     "Trial %d.%d segment %d: GO for %.2fs temp=%s°C",

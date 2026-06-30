@@ -75,12 +75,12 @@ class PracticeDemo:
             # STOP: read the question.
             self._display_state(TaskState.STOP, question)
             self.ui.wait(SPEECH_READ_SEC)
-            # STOP: "Rate your pain" prompt.
-            self.ui.show_rate_pain_prompt()
-            self.ui.wait(SPEECH_RATE_SEC)
             # GO: answer aloud.
             self._display_state(TaskState.GO, question)
             self.ui.wait(SPEECH_ANSWER_SEC)
+            # STOP: "Rate your pain" prompt (after speaking).
+            self.ui.show_rate_pain_prompt()
+            self.ui.wait(SPEECH_RATE_SEC)
         # Final brief STOP (stop speaking).
         self._display_state(TaskState.STOP, "Stop")
         self.ui.wait(SPEECH_RATE_SEC)
@@ -102,9 +102,9 @@ class PracticeDemo:
                 "Vowel practice complete!\n\n"
                 "PRACTICE MODE -- SPEECH Q&A TASK\n\n"
                 "  - A question appears on RED -- read it silently\n"
-                '  - A "Rate your pain" prompt follows (still RED)\n'
                 "  - When the screen turns GREEN -- answer aloud\n"
-                "  - Stop speaking when it turns RED again\n\n"
+                '  - A "Rate your pain" prompt follows (turns RED)\n'
+                "  - Stop speaking when the screen turns RED\n\n"
                 "Press SPACE to begin."
             )
             self._run_speech_demo()
