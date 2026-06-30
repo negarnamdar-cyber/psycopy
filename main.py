@@ -22,13 +22,18 @@ if __name__ == "__main__":
 try:
     from psycopy.medoc_experiment import MedocExperiment
     from psycopy.medoc import MedocConnectionError
-    from psycopy.config import ExperimentConfig, MedocConfig, show_startup_dialog
+    from psycopy.config import ExperimentConfig, ExperimentMode, MedocConfig, show_startup_dialog
 
     def main():
         config = show_startup_dialog()
         try:
-            experiment = MedocExperiment(config)
-            experiment.run()
+            if config.mode == ExperimentMode.PRACTICE:
+                from psycopy.practice_demo import PracticeDemo
+
+                PracticeDemo(config).run()
+            else:
+                experiment = MedocExperiment(config)
+                experiment.run()
         except MedocConnectionError as exc:
             from psychopy import gui
 

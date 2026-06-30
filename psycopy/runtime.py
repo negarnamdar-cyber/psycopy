@@ -243,53 +243,33 @@ class PsychoPyUI:
         if go_segmentation_enabled:
             if medoc_enabled:
                 instructions = (
-                    "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Vowel Experiment with Thermal Stimulation\n\n"
-                    "Each trial lasts 4 minutes.\n"
-                    "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
-                    "IMPORTANT:\n"
-                    "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
-                    "  • STOP immediately when the screen turns RED\n"
-                    "  • Stay silent during STOP periods\n"
-                    "  • The screen will switch multiple times per trial\n\n"
-                    "Thermal stimulation will be applied during the experiment.\n"
-                    "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 4 trials, with a 1-minute break between each.\n\n"
+                    "VOWEL EXPERIMENT\n\n"
+                    "Speak 'Ahh' when GREEN, stop when RED.\n"
+                    "Thermal stimulation will be applied.\n"
+                    "4 trials, 1-min break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
-                    "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Each trial lasts 4 minutes.\n"
-                    "The screen will alternate between RED (STOP) and GREEN (GO).\n\n"
-                    "IMPORTANT:\n"
-                    "  • Speak 'Ahh' ONLY when the screen is GREEN\n"
-                    "  • STOP immediately when the screen turns RED\n"
-                    "  • Stay silent during STOP periods\n"
-                    "  • The screen will switch multiple times per trial\n\n"
-                    "There will be 4 trials, with a 1-minute break between each.\n\n"
+                    "VOWEL EXPERIMENT\n\n"
+                    "Speak 'Ahh' when GREEN, stop when RED.\n"
+                    "4 trials, 1-min break between each.\n\n"
                     "Press SPACE to begin."
                 )
         else:
             if medoc_enabled:
                 instructions = (
-                    "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Vowel Experiment with Thermal Stimulation\n\n"
-                    "Each trial lasts 4 minutes.\n"
-                    "The screen will stay GREEN throughout each trial.\n"
-                    "Speak 'Ahh' continuously.\n\n"
-                    "Thermal stimulation will be applied during the experiment.\n"
-                    "You may experience changes in pain/discomfort levels.\n\n"
-                    "There will be 4 trials, with a 1-minute break between each.\n\n"
+                    "VOWEL EXPERIMENT\n\n"
+                    "Speak 'Ahh' continuously while GREEN.\n"
+                    "Thermal stimulation will be applied.\n"
+                    "4 trials, 1-min break between each.\n\n"
                     "Press SPACE to begin."
                 )
             else:
                 instructions = (
-                    "EXPERIMENT INSTRUCTIONS\n\n"
-                    "Each trial lasts 4 minutes.\n"
-                    "The screen will stay GREEN throughout each trial.\n"
-                    "Speak 'Ahh' continuously.\n\n"
-                    "There will be 4 trials, with a 1-minute break between each.\n\n"
+                    "VOWEL EXPERIMENT\n\n"
+                    "Speak 'Ahh' continuously while GREEN.\n"
+                    "4 trials, 1-min break between each.\n\n"
                     "Press SPACE to begin."
                 )
         self.instruction_text.text = instructions

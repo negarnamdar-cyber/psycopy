@@ -22,6 +22,7 @@ class ExperimentMode(Enum):
     PRACTICE_NO_MEDOC = "practice_no_medoc"  # Practice mode without Medoc device
     PRACTICE_WITH_MEDOC = "practice_with_medoc"  # Practice mode with Medoc device
     SPEECH = "speech"  # Structured speech Q&A with thermal stimulation
+    PRACTICE = "practice"  # Short on-screen demo of both tasks (no Medoc, no audio)
 
 
 def _validate_medoc_config(medoc_ip: str, medoc_port: int, medoc_timeout: float) -> None:
@@ -203,6 +204,7 @@ def show_startup_dialog() -> ExperimentConfig:
             "Normal (Full experiment)",
             "Practice (no Medoc device)",
             "Practice (with Medoc device)",
+            "Practice (short demo)",
             "Speech Q&A (questions + thermal)",
         ],
         initial="Normal (Full experiment)",
@@ -269,6 +271,8 @@ def show_startup_dialog() -> ExperimentConfig:
     mode_str_lower = mode_str.lower()
     if "speech" in mode_str_lower:
         mode = ExperimentMode.SPEECH
+    elif "demo" in mode_str_lower:
+        mode = ExperimentMode.PRACTICE
     elif "no medoc" in mode_str_lower:
         mode = ExperimentMode.PRACTICE_NO_MEDOC
     elif "with medoc" in mode_str_lower:
@@ -278,9 +282,9 @@ def show_startup_dialog() -> ExperimentConfig:
 
     # MedocConfig is always created, but require_connection depends on mode
     # - NORMAL: require_connection=True (must connect)
-    # - PRACTICE_NO_MEDOC: medoc_config=None (no Medoc at all)
+    # - PRACTICE_NO_MEDOC / PRACTICE: medoc_config=None (no Medoc at all)
     # - PRACTICE_WITH_MEDOC / SPEECH: require_connection=False (try to connect, but don't fail)
-    if mode == ExperimentMode.PRACTICE_NO_MEDOC:
+    if mode in (ExperimentMode.PRACTICE_NO_MEDOC, ExperimentMode.PRACTICE):
         medoc_config = None
     else:
         medoc_config = MedocConfig(

@@ -34,6 +34,11 @@ def parse_args() -> argparse.Namespace:
         help="Run practice mode and attempt to connect to Medoc if available.",
     )
     parser.add_argument(
+        "--practice-demo",
+        action="store_true",
+        help="Run a short on-screen demo of both tasks (no Medoc, no audio).",
+    )
+    parser.add_argument(
         "--speech",
         action="store_true",
         help="Run speech Q&A mode with thermal stimulation (~30 s per question, 4-min blocks, 4 blocks).",
@@ -79,7 +84,9 @@ def parse_bool(value: str) -> bool:
 
 
 def build_config(args: argparse.Namespace) -> ExperimentConfig:
-    if args.practice_no_medoc:
+    if args.practice_demo:
+        mode = ExperimentMode.PRACTICE
+    elif args.practice_no_medoc:
         mode = ExperimentMode.PRACTICE_NO_MEDOC
     elif args.practice_with_medoc:
         mode = ExperimentMode.PRACTICE_WITH_MEDOC
@@ -93,7 +100,7 @@ def build_config(args: argparse.Namespace) -> ExperimentConfig:
         mode = ExperimentMode.PRACTICE_NO_MEDOC
 
     medoc_config = None
-    if mode != ExperimentMode.PRACTICE_NO_MEDOC:
+    if mode not in (ExperimentMode.PRACTICE_NO_MEDOC, ExperimentMode.PRACTICE):
         medoc_config = MedocConfig(
             medoc_ip=args.medoc_ip,
             medoc_port=args.medoc_port,
@@ -137,6 +144,18 @@ def main() -> int:
 
     print("Initializing experiment with config:")
     print(config.to_dict())
+
+    if config.mode == ExperimentMode.PRACTICE:
+        from psycopy.practice_demo import PracticeDemo
+
+        print("Starting short practice demo (no Medoc, no audio).")
+        try:
+            PracticeDemo(config).run()
+            print("Practice demo complete.")
+            return 0
+        except KeyboardInterrupt:
+            print("Practice demo interrupted by keyboard.")
+            return 1
 
     experiment = MedocExperiment(config)
     if config.mode == ExperimentMode.SPEECH:
