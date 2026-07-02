@@ -1,20 +1,15 @@
 # Vowel Speech Gating Experiment with Medoc Thermal Stimulation
 
-PsychoPy experiment for vowel production under thermal stimulation with Medoc thermode device. The experiment runs 5 blocks of 6 trials (30 total) with varying pain conditions, alternating GO/STOP segments, and voice activity detection.
+PsychoPy experiment for vowel production under thermal stimulation with Medoc thermode device. The experiment runs 4 blocks of 1 trial (4 total) with alternating GO/STOP segments, and voice activity detection.
 
 ## Experiment Structure
 
-- **5 blocks** x **6 trials per block** = **30 total trials**
-- Each trial: **60 seconds** of alternating STOP/GO segments
-  - 3-7 GO segments per trial, each 3-7 seconds
+- **4 blocks** x **1 trial per block** = **4 total trials**
+- Each trial: **4 minutes (240 seconds)** of alternating STOP/GO segments
+  - 4-7 GO segments per minute (16-28 per trial), each 1.5-3.5 seconds
   - Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
 - **1-minute break** between blocks
-- Pain conditions distributed across 30 trials:
-  - xlow: 8 trials
-  - low: 8 trials
-  - medium: 7 trials
-  - high: 7 trials
-- Total experiment time: ~35 minutes (30 trials x 60s + 4 breaks x 60s)
+- Total experiment time: ~20 minutes (4 trials x 240s + 3 breaks x 60s)
 
 ## Architecture
 

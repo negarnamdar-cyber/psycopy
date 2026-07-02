@@ -2,7 +2,7 @@
 
 Generates trial schedules with constrained randomization.
 
-Default structure: 5 blocks of 1 trial = 5 total trials.
+Default structure: 4 blocks of 1 trial = 4 total trials.
 Each trial is a 4-minute (240-second) vowel task built from four 60-second
 minute-blocks of alternating STOP/GO segments.  Because every minute starts
 and ends on a STOP, the 60/120/180 s Medoc temperature steps always land on a
@@ -17,12 +17,14 @@ from dataclasses import asdict, dataclass
 
 # Vowel task timing.  Each 240 s trial is split into four 60 s minute-blocks so
 # that Medoc temperature steps (every 60 s) land on a STOP, never inside a GO.
-# Within every minute the trial draws 3-7 GO segments of 1.5-3.5 s each; the
+# Within every minute the trial draws 4-7 GO segments of 1.5-3.5 s each; the
 # remaining time is split evenly across the STOP periods that bracket and
-# separate the GO segments.
+# separate the GO segments.  A few more (short) GO segments per minute trim
+# each STOP pause by ~1 s for a rapid-fire feel while every minute still
+# fills exactly 60 s.
 VOWEL_GO_MIN_SEC = 1.5
 VOWEL_GO_MAX_SEC = 3.5
-VOWEL_GO_PER_MINUTE_MIN = 3
+VOWEL_GO_PER_MINUTE_MIN = 4
 VOWEL_GO_PER_MINUTE_MAX = 7
 MINUTE_SEC = 60.0
 NUM_MINUTES_PER_TRIAL = 4
@@ -122,7 +124,7 @@ def _generate_vowel_minute_schedule(
 ) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """Build one 240 s vowel trial from four independent 60 s minute-blocks.
 
-    Each minute draws 3-7 GO segments of 1.5-3.5 s.  The leftover time in the
+    Each minute draws 4-7 GO segments of 1.5-3.5 s.  The leftover time in the
     minute is split evenly across the (k+1) STOP periods that bracket and
     separate the GO segments, so every minute starts and ends on a STOP.  The
     four minute-blocks are concatenated, merging the trailing STOP of one
@@ -177,7 +179,7 @@ def generate_trials(
 
     Generates ``num_sets`` blocks of ``trials_per_set`` trial each.
     Each trial is a 240-second vowel task built from four independent
-    60-second minute-blocks.  Within every minute the trial draws 3-7 GO
+    60-second minute-blocks.  Within every minute the trial draws 4-7 GO
     segments of 1.5-3.5 s each; the remaining time is split evenly across the
     STOP periods that bracket and separate them.  Because each minute starts
     and ends on a STOP, the 60/120/180 s Medoc temperature steps always land
