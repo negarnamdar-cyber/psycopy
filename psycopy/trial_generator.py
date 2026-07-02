@@ -3,7 +3,10 @@
 Generates trial schedules with constrained randomization.
 
 Default structure: 5 blocks of 1 trial = 5 total trials.
-Each trial is a 4-minute (240-second) vowel task with alternating STOP/GO segments.
+Each trial is a 4-minute (240-second) vowel task built from four 60-second
+minute-blocks of alternating STOP/GO segments.  Because every minute starts
+and ends on a STOP, the 60/120/180 s Medoc temperature steps always land on a
+STOP period and never inside a GO (speaking) segment.
 All trials use the unified Medoc program (experiment 192).
 """
 
@@ -11,6 +14,18 @@ from __future__ import annotations
 
 import random
 from dataclasses import asdict, dataclass
+
+# Vowel task timing.  Each 240 s trial is split into four 60 s minute-blocks so
+# that Medoc temperature steps (every 60 s) land on a STOP, never inside a GO.
+# Within every minute the trial draws 3-7 GO segments of 1.5-3.5 s each; the
+# remaining time is split evenly across the STOP periods that bracket and
+# separate the GO segments.
+VOWEL_GO_MIN_SEC = 1.5
+VOWEL_GO_MAX_SEC = 3.5
+VOWEL_GO_PER_MINUTE_MIN = 3
+VOWEL_GO_PER_MINUTE_MAX = 7
+MINUTE_SEC = 60.0
+NUM_MINUTES_PER_TRIAL = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +97,9 @@ def _generate_go_durations(
 ) -> tuple[float, ...]:
     """Generate GO segment durations where each is in [min, max] and sum <= total_max.
 
-    With min=3, max=7 and total_max reserved from 240s, the max possible sum
-    (28 * 7 = 196) is always < total_max (211 for the worst case of 28 segments).
-    Therefore simple uniform random draws in [min, max] always satisfy the
+    With the vowel defaults (min=1.5, max=3.5) and total_max reserved from a
+    60 s minute, the max possible sum (7 * 3.5 = 24.5) is always well under
+    total_max, so simple uniform random draws in [min, max] always satisfy the
     constraints and no rescaling is needed.
 
     Args:
@@ -102,6 +117,56 @@ def _generate_go_durations(
     return tuple(round(rng.uniform(min_seg_sec, max_seg_sec), 2) for _ in range(num_segments))
 
 
+def _generate_vowel_minute_schedule(
+    rng: random.Random,
+) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Build one 240 s vowel trial from four independent 60 s minute-blocks.
+
+    Each minute draws 3-7 GO segments of 1.5-3.5 s.  The leftover time in the
+    minute is split evenly across the (k+1) STOP periods that bracket and
+    separate the GO segments, so every minute starts and ends on a STOP.  The
+    four minute-blocks are concatenated, merging the trailing STOP of one
+    minute with the leading STOP of the next into a single STOP that spans the
+    60 s boundary.  This guarantees the 60/120/180 s Medoc temperature steps
+    land on a STOP, never inside a GO (speaking) segment.
+
+    Returns:
+        ``(go_durations, stop_durations)`` where ``stop_durations`` holds one
+        STOP duration per GO segment (the STOP that precedes it).  The final
+        trailing STOP is left for the runtime to fill from the elapsed time.
+    """
+    flat: list[tuple[str, float]] = []
+    for _ in range(NUM_MINUTES_PER_TRIAL):
+        k = rng.randint(VOWEL_GO_PER_MINUTE_MIN, VOWEL_GO_PER_MINUTE_MAX)
+        go_durs = _generate_go_durations(
+            num_segments=k,
+            min_seg_sec=VOWEL_GO_MIN_SEC,
+            max_seg_sec=VOWEL_GO_MAX_SEC,
+            total_max=MINUTE_SEC,
+            rng=rng,
+        )
+        stop_per = (MINUTE_SEC - sum(go_durs)) / (k + 1)
+        # Minute sub-schedule: STOP, GO, STOP, GO, ..., STOP (k GOs, k+1 STOPs).
+        for go_dur in go_durs:
+            flat.append(("stop", stop_per))
+            flat.append(("go", go_dur))
+        flat.append(("stop", stop_per))  # trailing STOP closes the minute
+
+    # Merge consecutive STOPs at minute boundaries into single STOP periods.
+    merged: list[tuple[str, float]] = []
+    for state, dur in flat:
+        if merged and merged[-1][0] == "stop" and state == "stop":
+            merged[-1] = ("stop", merged[-1][1] + dur)
+        else:
+            merged.append((state, dur))
+
+    go_durations = tuple(d for s, d in merged if s == "go")
+    # Every STOP except the final trailing one precedes a GO segment.
+    stops = [d for s, d in merged if s == "stop"]
+    stop_durations = tuple(stops[:-1])
+    return go_durations, stop_durations
+
+
 def generate_trials(
     num_sets: int,
     trials_per_set: int,
@@ -110,18 +175,23 @@ def generate_trials(
 ) -> list[list[TrialConfig]]:
     """Generate randomized trial schedule.
 
-    Generates 4 blocks of 1 trial each (4 total).
-    Each trial has 12-28 GO segments (3-7 per minute, drawn independently for each
-    of the 4 minutes) within a 240-second window.
-    All trials use the unified Medoc program (experiment 192).
-    `num_stop_trials_ratio` and the `num_sets` / `trials_per_set` arguments are
-    ignored (retained for API compatibility).
+    Generates ``num_sets`` blocks of ``trials_per_set`` trial each.
+    Each trial is a 240-second vowel task built from four independent
+    60-second minute-blocks.  Within every minute the trial draws 3-7 GO
+    segments of 1.5-3.5 s each; the remaining time is split evenly across the
+    STOP periods that bracket and separate them.  Because each minute starts
+    and ends on a STOP, the 60/120/180 s Medoc temperature steps always land
+    on a STOP period and never inside a GO (speaking) segment.
+
+    Explicit STOP durations are emitted (``stop_segment_durations``) so the
+    runtime places each GO exactly inside its minute-block.
+    `num_stop_trials_ratio` is retained for API compatibility and ignored.
 
     Args:
         num_sets: Number of blocks.
         trials_per_set: Number of trials per block.
         num_stop_trials_ratio: Retained for API compatibility; ignored.
-        rng: Seeded Random instance for reproducibility
+        rng: Seeded Random instance for reproducibility.
 
     Returns:
         List of blocks, each block is a list of TrialConfig instances.
@@ -131,29 +201,13 @@ def generate_trials(
     for _ in range(num_sets):
         block: list[TrialConfig] = []
         for _ in range(trials_per_set):
-            # 3-7 GO segments per minute, independently for each of 4 minutes.
-            # This guarantees density and avoids edge cases where all segments
-            # cluster in one part of the 4-minute trial.
-            num_go_per_minute = [rng.randint(3, 7) for _ in range(4)]
-            num_go = sum(num_go_per_minute)
-            # Reserve ~1 s per STOP period so there is always some STOP time.
-            # With (num_go + 1) STOP periods, reserve that many seconds.
-            reserved_for_stop = float(num_go + 1)
-            max_go_total = 240.0 - reserved_for_stop
-
-            go_durs = _generate_go_durations(
-                num_segments=num_go,
-                min_seg_sec=3.0,
-                max_seg_sec=7.0,
-                total_max=max_go_total,
-                rng=rng,
-            )
-
+            go_durations, stop_durations = _generate_vowel_minute_schedule(rng)
             block.append(
                 TrialConfig(
                     task_type="vowel",
-                    num_go_segments=num_go,
-                    go_segment_durations=go_durs,
+                    num_go_segments=len(go_durations),
+                    go_segment_durations=go_durations,
+                    stop_segment_durations=stop_durations,
                 )
             )
 
@@ -167,9 +221,9 @@ def generate_speech_trials(
     questions: list[str],
     rng: random.Random,
     num_blocks: int = 4,
-    read_duration: float = 10.0,
+    read_duration: float = 13.0,
     rate_pain_duration: float = 5.0,
-    answer_duration: float = 15.0,
+    answer_duration: float = 12.0,
     trial_duration_sec: float = 240.0,
 ) -> list[list[TrialConfig]]:
     """Generate speech Q&A trial schedule with constant per-question timing.
@@ -177,18 +231,18 @@ def generate_speech_trials(
     Each block is a ``trial_duration_sec``-second trial (default 240 s) made of
     identical 30-second question cycles:
 
-        READ (STOP, question shown)          ->  ``read_duration`` s  (default 10)
-        ANSWER (GO, screen turns green)      ->  ``answer_duration`` s  (default 15)
+        READ (STOP, question shown)          ->  ``read_duration`` s  (default 13)
+        ANSWER (GO, screen turns green)      ->  ``answer_duration`` s  (default 12)
         "Rate your pain" prompt (STOP)      ->  ``rate_pain_duration`` s (default 5)
 
-    Pause (STOP) periods therefore total 15 s (longer) and the GO speaking
-    period is 15 s (shorter).  Durations are constant -- there is no
+    Pause (STOP) periods therefore total 18 s (longer) and the GO speaking
+    period is 12 s (shorter).  Durations are constant -- there is no
     randomization.
 
     The Medoc thermode changes temperature every 60 s.  Each cycle must divide
     60 s evenly so that temperature steps land exactly on cycle boundaries
     (between questions) and never inside a GO speaking period.  With the
-    default 10 + 5 + 15 = 30 s cycle, 8 questions fill a 240 s block and the
+    default 13 + 5 + 12 = 30 s cycle, 8 questions fill a 240 s block and the
     60 s / 120 s / 180 s temperature steps fall between questions, so the
     temperature never changes while the participant is speaking.
 

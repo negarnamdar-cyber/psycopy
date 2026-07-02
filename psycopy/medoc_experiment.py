@@ -7,10 +7,12 @@ VAD coordination, and data logging.
 Two experiment modes are supported:
 
  1. Vowel mode (NORMAL / PRACTICE):
-    - 4 blocks of 1 trial each = 4 total trials
-    - Each trial: 4 minutes (240 seconds) of alternating STOP/GO segments
-    - 1-minute break between blocks
-    - Total experiment time: ~20 minutes
+     - 4 blocks of 1 trial each = 4 total trials
+     - Each trial: 4 minutes (240 seconds) of alternating STOP/GO segments
+       built from four 60-second minute-blocks so the 60/120/180 s Medoc
+       temperature steps always land on a STOP, never inside a GO segment
+     - 1-minute break between blocks
+     - Total experiment time: ~20 minutes
 
  2. Speech mode (SPEECH):
      - Structured Q&A with thermal stimulation
@@ -18,10 +20,10 @@ Two experiment modes are supported:
       - Each block contains 8 questions (32 total); each question cycle lasts
         exactly 30 s so that 1-minute Medoc temperature steps fall between
         questions, never during a GO (speaking) period:
-          10 s READ (STOP, question shown)
-          + 15 s ANSWER (GO, screen turns green)
+          13 s READ (STOP, question shown)
+          + 12 s ANSWER (GO, screen turns green)
           + 5 s "Rate your pain" prompt (STOP)
-      - Pause (STOP) periods total 15 s (longer); GO speaking is 15 s (shorter)
+      - Pause (STOP) periods total 18 s (longer); GO speaking is 12 s (shorter)
      - No final rest needed because 8 x 30 s = 240 s
      - 1-minute break between blocks
      - Questions are configurable via ``ExperimentConfig.speech_questions``
@@ -33,7 +35,6 @@ from __future__ import annotations
 import logging
 import time
 from enum import Enum
-from pathlib import Path
 from random import Random
 from typing import Any
 
@@ -61,11 +62,11 @@ VOWEL_TEXT = "Ahh"
 # Speech Q&A timing (constant -- no randomization).  The three values sum to
 # 30 s, so 8 questions fill a 240 s block and 1-minute Medoc temperature steps
 # land on cycle boundaries (between questions), never inside a GO speaking
-# period.  Pause (STOP) periods total 15 s (longer); GO speaking is 15 s
+# period.  Pause (STOP) periods total 18 s (longer); GO speaking is 12 s
 # (shorter).
-SPEECH_READ_SEC = 10.0
+SPEECH_READ_SEC = 13.0
 SPEECH_RATE_PAIN_SEC = 5.0
-SPEECH_ANSWER_SEC = 15.0
+SPEECH_ANSWER_SEC = 12.0
 RATE_PAIN_TEXT = "Rate your pain"
 
 logger = logging.getLogger("psycopy.medoc_experiment")
@@ -123,6 +124,7 @@ class MedocExperiment:
 
         if config.mode == ExperimentMode.SPEECH:
             from psycopy.trial_generator import generate_speech_trials
+
             self.trials = generate_speech_trials(
                 questions=list(config.speech_questions),
                 num_blocks=num_blocks,
@@ -178,7 +180,9 @@ class MedocExperiment:
             trial_num,
         )
 
-        audio_filename = f"sub-{self.config.participant_id}_block-{set_num}_trial-{trial_num:03d}.wav"
+        audio_filename = (
+            f"sub-{self.config.participant_id}_block-{set_num}_trial-{trial_num:03d}.wav"
+        )
         audio_path = self.session_paths.audio_dir / audio_filename
 
         self.event_logger.log(
@@ -290,9 +294,11 @@ class MedocExperiment:
                         "segment_index": seg_idx,
                         "cue_type": "stop",
                         "cue_duration_sec": round(
-                            trial_config.speech_read_duration
-                            if trial_config.task_type == "speech"
-                            else stop_duration,
+                            (
+                                trial_config.speech_read_duration
+                                if trial_config.task_type == "speech"
+                                else stop_duration
+                            ),
                             3,
                         ),
                         "trial_elapsed_sec": round(stop_cue_ts - trigger_timestamp, 3),
@@ -301,14 +307,15 @@ class MedocExperiment:
                 )
                 stop_text = (
                     trial_config.segment_texts[seg_idx]
-                    if trial_config.task_type == "speech" and seg_idx < len(trial_config.segment_texts)
+                    if trial_config.task_type == "speech"
+                    and seg_idx < len(trial_config.segment_texts)
                     else VOWEL_TEXT
                 )
                 if trial_config.task_type == "speech":
                     # STOP = read the question.  Speaking (GO) follows, then the
                     # "Rate your pain" prompt closes the cycle.  Total STOP time
-                    # per question = read (10 s) + rate pain (5 s) == stop_duration
-                    # (15 s), so the 30 s cycle / temperature alignment is preserved.
+                    # per question = read (13 s) + rate pain (5 s) == stop_duration
+                    # (18 s), so the 30 s cycle / temperature alignment is preserved.
                     self._display_state(TaskState.STOP, stop_text)
                     self.ui.wait(trial_config.speech_read_duration)
                 else:
@@ -354,7 +361,8 @@ class MedocExperiment:
                 )
                 go_text = (
                     trial_config.segment_texts[seg_idx]
-                    if trial_config.task_type == "speech" and seg_idx < len(trial_config.segment_texts)
+                    if trial_config.task_type == "speech"
+                    and seg_idx < len(trial_config.segment_texts)
                     else VOWEL_TEXT
                 )
                 self._display_state(TaskState.GO, go_text)
@@ -386,6 +394,7 @@ class MedocExperiment:
                     go_duration,
                     current_temperature,
                 )
+                self._flush_loggers()
 
             # Final STOP cue (rest period — whatever time is left in the 4-minute block)
             final_stop_ts = time.monotonic()
@@ -410,6 +419,7 @@ class MedocExperiment:
                     "temperature_celsius": current_temperature,
                 },
             )
+            self._flush_loggers()
             final_text = (
                 trial_config.segment_texts[-1]
                 if trial_config.task_type == "speech" and trial_config.segment_texts
@@ -505,7 +515,9 @@ class MedocExperiment:
             response_code=response_code,
         )
 
-    def run_set(self, set_num: int, trials: list[TrialConfig], client: MedocClient | None = None) -> None:
+    def run_set(
+        self, set_num: int, trials: list[TrialConfig], client: MedocClient | None = None
+    ) -> None:
         self._current_set = set_num
         self._consecutive_poll_failures = 0
         self.event_logger.log(
@@ -526,6 +538,7 @@ class MedocExperiment:
                     trial_num,
                     trial_config.num_go_segments,
                 )
+                self._flush_loggers()
             except UserAbort:
                 raise
             except Exception as exc:
@@ -551,6 +564,7 @@ class MedocExperiment:
             block=f"block{set_num}",
             event_data={"block_number": set_num},
         )
+        self._flush_loggers()
         self.logger.info("Block %d complete: %d trials executed", set_num, len(trials))
 
     def _show_break_screen(self, duration: float = BLOCK_BREAK_SEC) -> None:
@@ -564,10 +578,7 @@ class MedocExperiment:
 
             displayed_second = int(remaining)
             if displayed_second != last_displayed_second:
-                message = (
-                    "BREAK\n\nRest your voice.\n\n"
-                    f"Next block in: {displayed_second}s"
-                )
+                message = "BREAK\n\nRest your voice.\n\n" f"Next block in: {displayed_second}s"
                 self.ui.instruction_text.text = message
                 self.ui.instruction_text.draw()
                 self.ui.help_text.draw()
@@ -618,6 +629,21 @@ class MedocExperiment:
         self.medoc_logger.save()
         self.event_logger.save()
         self.logger.info("All loggers saved to disk")
+
+    def _flush_loggers(self) -> None:
+        """Best-effort incremental flush of in-memory loggers to disk.
+
+        Called after each trial and at segment boundaries so data accumulated
+        so far survives an unexpected crash.  Storage errors are logged but
+        never raised here, so a transient disk issue cannot abort an
+        in-progress session (the data stays in memory for the next attempt).
+        """
+        try:
+            self.trial_logger.save()
+            self.medoc_logger.save()
+            self.event_logger.save()
+        except Exception as exc:
+            self.logger.warning("Incremental logger flush failed: %s", exc)
 
     def run(self) -> None:
         try:
@@ -764,9 +790,11 @@ class MedocExperiment:
 
 def configure_logging(output_dir) -> logging.Logger:
     from psycopy.runtime_logging import configure_logging as _configure_logging
+
     return _configure_logging(output_dir)
 
 
 def get_run_metadata(app_version: str) -> dict:
     from psycopy.runtime_logging import get_run_metadata as _get_run_metadata
+
     return _get_run_metadata(app_version)

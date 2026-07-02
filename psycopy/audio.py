@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import struct
 import threading
 import time
 import wave
@@ -16,6 +17,12 @@ import sounddevice as sd
 
 class AudioServiceError(RuntimeError):
     pass
+
+
+# How often the writer thread refreshes the on-disk WAV header sizes so a
+# recording stays playable if the process is killed mid-trial.  The raw PCM is
+# streamed to disk continuously; this only keeps the length fields current.
+_HEADER_PATCH_INTERVAL_SEC = 1.0
 
 
 class AudioService:
@@ -33,6 +40,7 @@ class AudioService:
         self.is_recording = False
         self.filename: str | None = None
         self._monotonic_start: float = 0.0
+        self._last_header_patch: float = 0.0
         self.logger = logging.getLogger("psycopy.audio")
 
     def preflight(self) -> None:
@@ -60,6 +68,7 @@ class AudioService:
         self._wave_file.setnchannels(1)
         self._wave_file.setsampwidth(2)
         self._wave_file.setframerate(self.sample_rate)
+        self._last_header_patch = time.monotonic()
         self._writer_thread = threading.Thread(target=self._writer_loop, daemon=True)
         self._writer_thread.start()
 
@@ -76,8 +85,39 @@ class AudioService:
                     return
                 pcm = (np.clip(chunk, -1.0, 1.0) * 32767).astype(np.int16).tobytes()
                 wave_file.writeframes(pcm)
+                self._maybe_patch_header(wave_file)
             finally:
                 audio_queue.task_done()
+
+    def _maybe_patch_header(self, wave_file: Any) -> None:
+        """Throttled, best-effort refresh of the WAV header length fields."""
+        now = time.monotonic()
+        if now - self._last_header_patch < _HEADER_PATCH_INTERVAL_SEC:
+            return
+        self._last_header_patch = now
+        try:
+            self._patch_wave_header(wave_file)
+        except Exception as exc:  # pragma: no cover - best effort, never fatal
+            self.logger.warning("WAV header patch failed: %s", exc)
+
+    def _patch_wave_header(self, wave_file: Any) -> None:
+        """Rewrite the RIFF/data chunk sizes to match bytes written so far.
+
+        Keeps the on-disk file playable if the process is killed before the
+        wave file is closed.  Single-threaded (called only from the writer
+        thread), so there is no concurrent seek/write race.
+        """
+        fileobj = getattr(wave_file, "_file", None)
+        written = getattr(wave_file, "_datawritten", 0)
+        if fileobj is None or not written:
+            return
+        end = fileobj.tell()
+        fileobj.seek(4)
+        fileobj.write(struct.pack("<I", 36 + written))
+        fileobj.seek(40)
+        fileobj.write(struct.pack("<I", written))
+        fileobj.seek(end)
+        fileobj.flush()
 
     def _finish_writer(self) -> None:
         audio_queue = self._audio_queue
@@ -147,7 +187,9 @@ class AudioService:
         self._finish_writer()
         self.is_recording = False
         if self._dropped_audio_chunks:
-            self.logger.warning("Dropped %d audio chunks while recording", self._dropped_audio_chunks)
+            self.logger.warning(
+                "Dropped %d audio chunks while recording", self._dropped_audio_chunks
+            )
         self.logger.info("Audio recording stopped: %s", self.filename)
 
     def abort(self) -> None:

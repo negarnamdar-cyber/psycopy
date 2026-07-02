@@ -3,7 +3,7 @@
 Tests verify:
 - 4 blocks x 1 trial = 4 trials total
 - All trials are vowel trials
-- Each trial has 3-7 GO segments, each 3-7 seconds
+- Each trial has 3-7 GO segments per minute (12-28 total), each 1.5-3.5 seconds
 - All CSV files created (trials.csv, medoc_events.csv, events.csv)
 - Config snapshot exists (config.json)
 
@@ -382,7 +382,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Each GO segment is 3-7 seconds and total GO < 240."""
+        """QA Scenario: Each GO segment is 1.5-3.5 seconds and total GO < 240."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -411,8 +411,8 @@ class TestFullExperimentOutput:
             for block in exp.trials:
                 for trial in block:
                     for dur in trial.go_segment_durations:
-                        assert 3.0 <= dur <= 7.0, (
-                            f"GO segment duration {dur} outside [3, 7]"
+                        assert 1.5 <= dur <= 3.5, (
+                            f"GO segment duration {dur} outside [1.5, 3.5]"
                         )
                     total_go = sum(trial.go_segment_durations)
                     assert total_go < 240.0, (
@@ -776,16 +776,16 @@ class TestTrialGeneratorValidation:
                 )
 
     def test_go_durations_in_range(self):
-        """Validate: Each GO segment is 3-7 seconds and total GO < 240."""
+        """Validate: Each GO segment is 1.5-3.5 seconds and total GO < 240."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
         trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
                 for seg_idx, dur in enumerate(trial.go_segment_durations):
-                    assert 3.0 <= dur <= 7.0, (
+                    assert 1.5 <= dur <= 3.5, (
                         f"Block {block_idx} Trial {trial_idx} Segment {seg_idx}: "
-                        f"expected 3-7s, got {dur}"
+                        f"expected 1.5-3.5s, got {dur}"
                     )
                 total_go = sum(trial.go_segment_durations)
                 assert total_go < 240.0, (

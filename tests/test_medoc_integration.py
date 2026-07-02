@@ -385,14 +385,70 @@ class TestTrialGenerator:
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
                 for seg_idx, dur in enumerate(trial.go_segment_durations):
-                    assert 3.0 <= dur <= 7.0, (
+                    assert 1.5 <= dur <= 3.5, (
                         f"Block {block_idx} Trial {trial_idx} Segment {seg_idx}: "
-                        f"expected 3-7s, got {dur}"
+                        f"expected 1.5-3.5s, got {dur}"
                     )
                 total_go = sum(trial.go_segment_durations)
                 assert total_go < 240.0, (
                     f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 240s"
                 )
+
+    def test_vowel_has_explicit_stop_durations(self):
+        """Vowel trials emit explicit STOP durations (one per GO segment)."""
+        from random import Random
+
+        rng = Random(42)
+        trials = generate_trials(
+            num_sets=5,
+            trials_per_set=1,
+            num_stop_trials_ratio=0.0,
+            rng=rng,
+        )
+
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                assert trial.stop_segment_durations, (
+                    f"Block {block_idx} Trial {trial_idx}: expected explicit "
+                    f"stop_segment_durations for vowel"
+                )
+                assert len(trial.stop_segment_durations) == trial.num_go_segments, (
+                    f"Block {block_idx} Trial {trial_idx}: expected one STOP per GO, "
+                    f"got {len(trial.stop_segment_durations)} stops for "
+                    f"{trial.num_go_segments} GOs"
+                )
+
+    def test_vowel_go_never_crosses_minute_boundary(self):
+        """No GO segment spans a 60/120/180s Medoc temperature-change boundary."""
+        from random import Random
+
+        rng = Random(42)
+        trials = generate_trials(
+            num_sets=5,
+            trials_per_set=1,
+            num_stop_trials_ratio=0.0,
+            rng=rng,
+        )
+
+        boundaries = [60.0, 120.0, 180.0]
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                stops = list(trial.stop_segment_durations)
+                gos = list(trial.go_segment_durations)
+                # Reconstruct the flat STOP/GO/.../STOP schedule.
+                t = 0.0
+                for seg_idx, go_dur in enumerate(gos):
+                    # STOP precedes this GO.
+                    t += stops[seg_idx]
+                    go_start = t
+                    go_end = t + go_dur
+                    for b in boundaries:
+                        assert not (go_start <= b <= go_end), (
+                            f"Block {block_idx} Trial {trial_idx} Segment "
+                            f"{seg_idx}: GO [{go_start}, {go_end}] crosses the "
+                            f"{b}s temperature-change boundary"
+                        )
+                    t = go_end
 
     def test_reproducibility_with_seed(self):
         from random import Random
