@@ -366,8 +366,8 @@ class TestTrialGenerator:
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
-                assert 16 <= trial.num_go_segments <= 28, (
-                    f"Block {block_idx} Trial {trial_idx}: expected 16-28 GO segments, "
+                assert 32 <= trial.num_go_segments <= 44, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 32-44 GO segments, "
                     f"got {trial.num_go_segments}"
                 )
 
@@ -392,6 +392,36 @@ class TestTrialGenerator:
                 total_go = sum(trial.go_segment_durations)
                 assert total_go < 240.0, (
                     f"Block {block_idx} Trial {trial_idx}: total GO {total_go} >= 240s"
+                )
+
+    def test_vowel_stop_durations_in_range(self):
+        """Vowel STOP pauses are 3.5-4.5 s and the trial fills exactly 240 s."""
+        from random import Random
+
+        rng = Random(42)
+        trials = generate_trials(
+            num_sets=5,
+            trials_per_set=1,
+            num_stop_trials_ratio=0.0,
+            rng=rng,
+        )
+
+        for block_idx, block_trials in enumerate(trials):
+            for trial_idx, trial in enumerate(block_trials):
+                for seg_idx, dur in enumerate(trial.stop_segment_durations):
+                    assert 3.5 <= dur <= 4.5, (
+                        f"Block {block_idx} Trial {trial_idx} STOP {seg_idx}: "
+                        f"expected 3.5-4.5s, got {dur}"
+                    )
+                # STOPs (one per GO) + GOs + final STOP (== last STOP) == 240 s.
+                final_stop = trial.stop_segment_durations[-1]
+                total = (
+                    sum(trial.stop_segment_durations)
+                    + sum(trial.go_segment_durations)
+                    + final_stop
+                )
+                assert abs(total - 240.0) < 1e-6, (
+                    f"Block {block_idx} Trial {trial_idx}: total {total} != 240s"
                 )
 
     def test_vowel_has_explicit_stop_durations(self):

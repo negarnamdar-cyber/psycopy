@@ -6,7 +6,8 @@ PsychoPy experiment for vowel production under thermal stimulation with Medoc th
 
 - **4 blocks** x **1 trial per block** = **4 total trials**
 - Each trial: **4 minutes (240 seconds)** of alternating STOP/GO segments
-  - 4-7 GO segments per minute (16-28 per trial), each 1.5-3.5 seconds
+  - 32-44 GO segments per trial, each 1.5-3.5 seconds
+  - STOP pauses of 3.5-4.5 seconds between GOs (and straddling each 60s mark)
   - Pattern: STOP -> GO -> STOP -> GO -> ... -> STOP
 - **1-minute break** between blocks
 - Total experiment time: ~20 minutes (4 trials x 240s + 3 breaks x 60s)

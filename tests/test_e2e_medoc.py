@@ -3,7 +3,7 @@
 Tests verify:
 - 4 blocks x 1 trial = 4 trials total
 - All trials are vowel trials
-- Each trial has 4-7 GO segments per minute (16-28 total), each 1.5-3.5 seconds
+- Each trial has 32-44 short GO segments, each 1.5-3.5 seconds, with 3.5-4.5s STOPs
 - All CSV files created (trials.csv, medoc_events.csv, events.csv)
 - Config snapshot exists (config.json)
 
@@ -342,7 +342,7 @@ class TestFullExperimentOutput:
         mock_ui,
         mock_logger,
     ):
-        """QA Scenario: Each trial has 4-7 GO segments per minute (16-28 total)."""
+        """QA Scenario: Each trial has 32-44 short GO segments (rapid-fire)."""
         from psycopy.medoc_experiment import MedocExperiment
 
         with (
@@ -370,8 +370,8 @@ class TestFullExperimentOutput:
             exp = MedocExperiment(config)
             for block in exp.trials:
                 for trial in block:
-                    assert 16 <= trial.num_go_segments <= 28, (
-                        f"Expected 16-28 GO segments, got {trial.num_go_segments}"
+                    assert 32 <= trial.num_go_segments <= 44, (
+                        f"Expected 32-44 GO segments, got {trial.num_go_segments}"
                     )
 
     def test_e2e_go_segment_durations(self,
@@ -764,14 +764,14 @@ class TestTrialGeneratorValidation:
                 )
 
     def test_go_segments_in_range(self):
-        """Validate: Each trial has 4-7 GO segments per minute (16-28 total)."""
+        """Validate: Each trial has 32-44 GO segments (short, rapid-fire)."""
         rng = get_rng(ExperimentConfig(random_seed="42"))
         trials = generate_trials(num_sets=5, trials_per_set=1, num_stop_trials_ratio=0.0, rng=rng)
 
         for block_idx, block_trials in enumerate(trials):
             for trial_idx, trial in enumerate(block_trials):
-                assert 16 <= trial.num_go_segments <= 28, (
-                    f"Block {block_idx} Trial {trial_idx}: expected 16-28 GO segments, "
+                assert 32 <= trial.num_go_segments <= 44, (
+                    f"Block {block_idx} Trial {trial_idx}: expected 32-44 GO segments, "
                     f"got {trial.num_go_segments}"
                 )
 
