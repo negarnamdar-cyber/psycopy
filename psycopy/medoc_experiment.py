@@ -56,7 +56,6 @@ from psycopy.validation import validate_config
 
 TRIAL_DURATION_SEC = 240.0
 BLOCK_BREAK_SEC = 60.0
-SPEECH_MAX_FINAL_REST_SEC = 30.0
 VOWEL_TEXT = "Ahh"
 
 # Speech Q&A timing (constant -- no randomization).  The three values sum to
@@ -399,14 +398,7 @@ class MedocExperiment:
             # Final STOP cue (rest period — whatever time is left in the 4-minute block)
             final_stop_ts = time.monotonic()
             elapsed = time.monotonic() - trigger_timestamp
-            if trial_config.task_type == "speech":
-                # Speech blocks: cap final rest so short-question blocks don't feel stuck.
-                final_stop = min(
-                    max(0.0, TRIAL_DURATION_SEC - elapsed),
-                    SPEECH_MAX_FINAL_REST_SEC,
-                )
-            else:
-                final_stop = max(0.0, TRIAL_DURATION_SEC - elapsed)
+            final_stop = max(0.0, TRIAL_DURATION_SEC - elapsed)
             self.event_logger.log(
                 event_type="stop_cue",
                 trial_instance_id=trial_instance_id,

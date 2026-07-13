@@ -344,62 +344,19 @@ class MedocClient:
         return False
 
     def _stop_to_ready(self) -> None:
-        # Pre-check: if already READY/IDLE, sending STOP is illegal and can
-        # put the device into an error state where it stops responding.
+        # NOTE: Forced Abort Test (STOP) removed — the device errors with
+        # IllegalState ("Current state: Rest") when the 4-minute program has
+        # already finished and entered cooldown.  We only poll status here for
+        # logging/visibility and never send the STOP command.
         try:
-            status = self.poll_status(tag="CHECK_BEFORE_STOP")
-            test_state = status.get("test_state")
-            device_state = status.get("device_state")
-            if test_state in (0, 3) and device_state in (0, 1):
-                logger.debug(
-                    "Medoc already in READY/IDLE (test_state=%s, device_state=%s), skipping STOP",
-                    test_state,
-                    device_state,
-                )
-                return
-        except Exception as exc:
-            # If we can't read status, the device may be unresponsive or in an
-            # error state. Don't risk a long freeze — just return.
-            logger.warning("Could not check Medoc status before STOP: %s", exc)
-            return
-
-        # Device is running — send STOP
-        raw: bytes | None = None
-        try:
-            raw = self._send_framed_command_once(
-                self.STOP,
-                tag=f"STOP {self.UNIFIED_PROGRAM_LABEL}",
-                allow_incomplete=True,
+            status = self.poll_status(tag="STATUS_NO_STOP")
+            logger.debug(
+                "Medoc status (no STOP sent): test_state=%s, device_state=%s",
+                status.get("test_state"),
+                status.get("device_state"),
             )
         except Exception as exc:
-            logger.debug("STOP did not complete: %s", exc)
-
-        # If STOP returned ILLEGAL_STATE / NOT_PROPER_STATE, the device is likely
-        # already stopped or in an error state. One verify poll is enough.
-        rc = self._parse_response_code_or_none(raw) if raw else None
-        if rc in (MedocResponseCode.ILLEGAL_STATE, MedocResponseCode.NOT_PROPER_STATE):
-            logger.debug("STOP returned response code %s — verifying once", rc)
-            try:
-                status = self.poll_status(tag="VERIFY_AFTER_STOP_ERROR")
-                if status.get("test_state") in (0, 3) and status.get("device_state") in (0, 1):
-                    return
-            except Exception as exc:
-                logger.debug("Verify-after-STOP poll failed: %s", exc)
-            return
-
-        # Poll briefly for READY (max ~5 sec to avoid long freezes)
-        for _ in range(10):
-            time.sleep(0.5)
-            try:
-                status = self.poll_status(tag=f"WAIT_READY({self.UNIFIED_PROGRAM_LABEL})")
-            except Exception as exc:
-                logger.debug("WAIT_READY poll failed: %s", exc)
-                continue
-
-            if status.get("test_state") in (0, 3) and status.get("device_state") in (0, 1):
-                return
-
-        logger.warning("Medoc still not READY after STOP; proceeding anyway")
+            logger.warning("Could not poll Medoc status: %s", exc)
 
     def send_unified_program(self) -> None:
         """Send the unified program via SELECT_TP + START."""
