@@ -678,7 +678,6 @@ class MedocExperiment:
                                 block_num,
                                 exc,
                             )
-                            speech_client = None
 
                     self.logger.info("Starting block %d of %d", block_num + 1, len(self.trials))
                     self.run_set(block_num, block_trials, client=speech_client)

@@ -1,45 +1,61 @@
-# psycopy Experiment Runner
+# psycopy package
 
-This repository implements a PsychoPy-based speech experiment with optional Medoc thermode integration, audio recording, voice activity detection, and session logging.
+PsychoPy-based speech-gating experiment runner with Medoc thermode integration,
+audio recording, voice activity detection (VAD), and session logging.
 
 ## Run the experiment
 
-From the repository root:
+The experiment is launched from the repository root (not this directory):
 
 ```powershell
-python run_experiment.py
+python main.py
 ```
 
-By default, this shows the PsychoPy startup dialog for experiment configuration.
+This opens the PsychoPy startup dialog for experiment configuration
+(participant/session ID, mode, Medoc connection, random seed, fullscreen,
+VAD enable). There is no command-line flag interface; all setup is done
+through the dialog.
 
-### Run with CLI options
+See the repository-root [`README.md`](../README.md) for the full quick-start,
+configuration reference, and data-output schema. See
+[`METHODOLOGY.md`](../METHODOLOGY.md) for the manuscript-ready methods
+description.
 
-```powershell
-python run_experiment.py --no-dialog --practice-no-medoc --participant-id 001 --session-id 01 --fullscreen false
-```
+## Modes
 
-### CLI options
+The startup dialog's **Mode** field selects:
 
-- `--normal` : full experiment with Medoc required
-- `--practice-no-medoc` : practice mode without Medoc
-- `--practice-with-medoc` : practice mode that attempts Medoc if available
-- `--participant-id` : participant ID string
-- `--session-id` : session ID string
-- `--random-seed` : optional random seed
-- `--fullscreen true|false` : PsychoPy fullscreen mode
-- `--vad-enabled true|false` : enable voice activity detection
-- `--medoc-ip` : Medoc device IP address
-- `--medoc-port` : Medoc device TCP port
-- `--medoc-timeout` : Medoc socket timeout in seconds
+- **Normal (Full experiment)** — 4 vowel blocks, Medoc connection required
+- **Practice (no Medoc device)** — 1 block, no thermal stimulation, no
+  temperature data (useful for development/testing)
+- **Practice (with Medoc device)** — 1 block, attempts Medoc but does not
+  require it
+- **Practice (short demo)** — on-screen demo of both tasks (no Medoc, no audio)
+- **Speech Q&A** — structured pain-focused Q&A with thermal stimulation
+
+## Module map
+
+- `config.py` — configuration model + startup dialog
+- `medoc_experiment.py` — main experiment orchestration (trial loop, cues)
+- `medoc.py` — Medoc thermode TCP client (MMS framed protocol)
+- `trial_generator.py` — constrained GO/STOP schedule generation
+- `runtime.py` — PsychoPy UI primitives (window, cues, waits, abort)
+- `session.py` — output paths + batched loggers
+- `storage.py` — atomic CSV/JSON writes
+- `audio.py` — crash-safe streaming WAV recorder
+- `vad.py` — WebRTC VAD real-time service
+- `features.py` — post-run openSMILE eGeMAPSv02 extraction
+- `models.py` — typed runtime models and enums
+- `practice_demo.py` — short on-screen demo of STOP/GO mechanics
 
 ## Dependencies
 
-Install the required Python packages:
+Install from the repository root:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-If you plan to use VAD on Windows, the `webrtcvad-wheels` package is included.
-
-If you want post-run feature extraction, install `opensmile` separately.
+Core runtime: `psychopy`, `sounddevice`, `scipy`, `numpy`.
+Post-processing: `webrtcvad-wheels`, `opensmile`, `pandas`.
+Pain CNNs: `torch` + `librosa` (regression) or `tensorflow` + `librosa` (3-class).
