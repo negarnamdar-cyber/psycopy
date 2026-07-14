@@ -63,12 +63,12 @@ Core modules under `psycopy/*`:
 
 Offline analysis under `scripts/`:
 
-- `scripts/process.py`: Unified post-processing (VAD + ComParE_2016 features)
-- `scripts/ml_segmenter.py`: Slice audio into per-GO segments for ML
-- `scripts/cnn_analyze.py`: Regression pain CNN evaluation (PyTorch)
-- `scripts/cnn3_analyze.py`: 3-class pain CNN evaluation (Keras)
+- `scripts/organize_sessions.py`: Merge scattered session folders into a single pipeline input (Phase 0)
 
-Pretrained models live in `portable_pain_cnn/`.
+Retired scripts live in `scripts/old/`:
+
+- `scripts/old/cnn_analyze.py`: Regression pain CNN evaluation (PyTorch)
+- `scripts/old/cnn3_analyze.py`: 3-class pain CNN evaluation (Keras)
 
 ## Quick Start
 
@@ -128,9 +128,10 @@ Each session creates a directory:
 |------|-------------|
 | `trials.csv` | Per-trial metadata with pain conditions |
 | `medoc_events.csv` | Medoc device events (trigger + 5 s temperature polls) |
-| `vad_events.csv` | Voice activity detection events (offline) |
 | `events.csv` | Experiment lifecycle events (cues, recording markers) |
 | `config.json` | Configuration snapshot + run metadata |
+| `participant_info.json` | Consolidated demographics + initializing temps + questionnaire answers (PCS, PANAS) |
+| `merge_report.json` | Per-trial merge provenance + warnings (merged sessions) |
 | `run.log` | Runtime log |
 | `audio/*.wav` | Original audio recordings (44.1 kHz mono) |
 | `audio_16k/*.wav` | 16 kHz mono audio for analysis |
@@ -161,36 +162,88 @@ VAD uses Google's WebRTC VAD (`webrtcvad`) with these defaults:
 - **Speech offset**: 10 consecutive silent frames (300 ms)
 - **Target rate**: 16,000 Hz
 
-A real-time `VADService` (`psycopy/vad.py`) is available; the production
-analysis path runs VAD offline via `scripts/process.py`, computing:
-
-- **GO-onset latency** (first `speech_start` after a GO cue)
-- **Speech-cessation latency** (first `speech_end` after a STOP cue)
-
-Both latencies are reported in milliseconds and joined with the temperature
-recorded at the cue.
+A real-time `VADService` (`psycopy/vad.py`) is available for live use. Offline
+VAD + acoustic feature extraction is being rebuilt and will be documented here
+once complete.
 
 ## Offline Post-Processing
 
+### Phase 0: Organize + merge scattered sessions
+
+When a Medoc failure or crash forces a re-run, one logical session ends up
+scattered across multiple timestamped folders (each with a different session
+ID). `organize_sessions.py` reassembles them into a single merged folder before
+the rest of the pipeline runs.
+
 ```bash
-# Run VAD + openSMILE ComParE_2016 features on all unprocessed sessions
-python scripts/process.py
-# Re-process everything
-python scripts/process.py --force
-# Process a single session
-python scripts/process.py <path>
+# Merge all sessions for a participant (speech + vowel)
+python scripts/organize_sessions.py data/p001
+
+# Merge only speech sessions
+python scripts/organize_sessions.py data/p001 --task speech
+
+# Preview the merge without writing anything
+python scripts/organize_sessions.py data/p001 --dry-run
+
+# Overwrite an existing -processed directory
+python scripts/organize_sessions.py data/p001 --force
 ```
+
+Output layout:
+
+```
+data/p001/                          # original raw — never touched
+    {ts}_sub-001_session-01_task-speech/
+    {ts}_sub-001_session-02_task-speech/
+    {ts}_sub-001_session-01_task-vowel/
+
+data/p001-processed/                # everything processed lives here
+    raw/                             # audit-trail copy of originals
+        {ts}_sub-001_session-01_task-speech/
+        ...
+    merged_task-speech/             # organize output -> pipeline input
+        audio/
+        events.csv
+        medoc_events.csv
+        trials.csv
+        config.json
+        participant_info.json
+        merge_report.json
+    merged_task-vowel/
+```
+
+Key behaviors:
+
+- **Union, not dedup**: every trial that survived is kept — no trial is
+  discarded unless it genuinely saved nothing (logged as an accepted gap)
+- **Audio renaming**: WAVs are renamed with session IDs
+  (`sub-001_session-02_block-0_trial-000.wav`) to prevent collisions across
+  sessions
+- **Demographic consolidation**: `age`, `sex`, `ethnicity`, `first_language`
+  are pulled from whichever session has them and consolidated into
+  `participant_info.json` + `config.json`
+- **Initializing temps**: 4 blank fields (`initializing_temp_1`–`4`) are
+  added to `participant_info.json` for manual entry
+- **Questionnaires**: blank fields for the PCS (13 items, `pcs_1`–`pcs_13`)
+  and PANAS (20 items, `panas_1`–`panas_20`) from the paper forms in
+  `required/` are added to `participant_info.json` for manual entry. A
+  `_questionnaire_reference` key documents subscales, scoring ranges, and
+  source files.
+- **`merge_report.json`**: per-trial source folder, WAV duration,
+  medoc-present flag, warnings, and accepted gaps
+
+### ML segmentation
+
+ML segmentation (slicing merged audio into per-GO segments) is being rebuilt.
+The previous `scripts/ml_segmenter.py` has been retired. This section will be
+updated when the new pipeline is complete.
 
 ## ML Pain Prediction
 
 ```bash
-# 1. Slice audio into per-GO segments
-python scripts/ml_segmenter.py 001
-# 2. Manually fill segments.csv `pain` column with 1-10 ratings
-# 3. Evaluate regression CNN (PyTorch)
-python scripts/cnn_analyze.py 001
-# 4. Evaluate 3-class CNN (Keras)
-python scripts/cnn3_analyze.py 001
+# 1. Organize + merge scattered sessions
+python scripts/organize_sessions.py data/p001
+# 2. Segment audio + evaluate CNN models (in progress — see scripts/old/ for retired implementations)
 ```
 
 ## Testing

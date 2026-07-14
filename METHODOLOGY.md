@@ -307,11 +307,12 @@ exercised offline in the production analysis path.
 
 ### 7.3 Offline VAD (analysis path)
 
-`scripts/process.py:422` runs WebRTC VAD over each vowel WAV. For every **GO
-cue** it finds the first `speech_start` after the cue -> **GO-onset latency**
-(`go_latency_ms`); for every **STOP cue** it finds the first `speech_end`
-after the cue -> **speech-cessation latency** (`stop_latency_ms`). Results are
-written to `vad_events.csv`, joined with the cue's recorded
+Offline VAD + acoustic feature extraction is being rebuilt (the previous
+`scripts/process.py` has been retired). The pipeline runs WebRTC VAD over each
+vowel WAV: for every **GO cue** it finds the first `speech_start` after the cue
+-> **GO-onset latency** (`go_latency_ms`); for every **STOP cue** it finds the
+first `speech_end` after the cue -> **speech-cessation latency**
+(`stop_latency_ms`). Results are joined with the cue's recorded
 `temperature_celsius`.
 
 ### 7.4 Latency computation
@@ -321,30 +322,38 @@ written to `vad_events.csv`, joined with the cue's recorded
   timestamp.
 
 Both are reported in **milliseconds** and joined with the temperature recorded
-at the cue (`scripts/process.py:510`).
+at the cue.
 
-## 8. Offline post-processing pipeline (`scripts/process.py`)
+## 8. Offline post-processing pipeline
 
-A unified batch processor scans `data/` for unprocessed sessions (tracked via
-`processed.json`) and runs, per session:
+The post-processing pipeline has two phases:
 
-1. **Discovery** — parses `events.csv` `recording_start` rows, resolves each
-   `trial_instance_id` to its WAV, infers `audio_type` (vowel/speech), and
-   loads temperature series from `medoc_events.csv`.
-2. **VAD** (vowel trials) -> `vad_events.csv` (above).
-3. **openSMILE ComParE_2016 features — vowel** (`process.py:709`):
-   - Standardize each WAV to 16 kHz mono (`standardize_16k_mono`).
-   - Build GO intervals from `go_cue` events, **expand each by +/-0.35 s
-     context**, then apply **sliding windows of 10 s with 1-s hop** (with a
-     tail window).
-   - Extract ComParE_2016 at the **Functionals** level per window ->
-     `vowel_features_ComParE.csv`, annotated with `trial_instance_id`,
-     `temperature_celsius`, `block`, window/interval bounds.
-4. **openSMILE ComParE_2016 features — speech** (`process.py:804`):
-   whole-recording ComParE_2016 Functionals per speech WAV ->
-   `speech_features_ComParE.csv`.
-5. **`summary.csv`** — per-session counts.
-6. Marks `processed.json` complete.
+### Phase 0: Session organization (`scripts/organize_sessions.py`)
+
+When Medoc failures or crashes force re-runs, one logical session scatters
+across multiple timestamped folders (each with a different session ID).
+`organize_sessions.py` reassembles them before downstream processing:
+
+- **Groups** session folders by `sub-{participant}_task-{task}` (stripping
+  timestamps).
+- **Unions** all surviving trials across folders — no dedup (different session
+  IDs = unique trial IDs); trials that saved nothing are logged as accepted
+  gaps.
+- **Renames audio** with session IDs to prevent collisions
+  (`sub-P_session-S_block-N_trial-NNN.wav`).
+- **Consolidates demographics** (`age`, `sex`, `ethnicity`, `first_language`)
+  from whichever session has them into `participant_info.json` + `config.json`.
+- **Adds 4 blank initializing-temp fields** to `participant_info.json` for
+  manual entry.
+- Copies originals to `pxx-processed/raw/` as an audit trail.
+- Writes `merge_report.json` with per-trial provenance, WAV duration,
+  medoc-present flag, warnings, and gaps.
+
+### Phase 1: Acoustic feature extraction (in progress)
+
+Offline VAD + openSMILE ComParE_2016 feature extraction is being rebuilt. The
+previous `scripts/process.py` has been retired; this section will be updated
+when the new pipeline is complete.
 
 An older in-package extractor (`psycopy/features.py`) implements the same
 GO-context/sliding-window scheme but with the **eGeMAPSv02** feature set (88
@@ -353,49 +362,42 @@ summary) tier.
 
 ### 8.1 Temperature matching (limitation)
 
-`match_temperature_for_segment` returns the **mean of all valid readings for a
-trial**, not a timestamp-matched/interpolated value (`process.py:184`). The
-code comments flag this as a future improvement: per-segment temperature is
-approximated by the trial-level mean rather than the instantaneous reading at
-each GO's onset. The raw 5 s poll series *is* preserved in
-`medoc_events.csv`, so exact timestamp matching is possible in post-hoc
-analysis.
+Temperature matching currently returns the **mean of all valid readings for a
+trial**, not a timestamp-matched/interpolated value. The code comments flag
+this as a future improvement: per-segment temperature is approximated by the
+trial-level mean rather than the instantaneous reading at each GO's onset. The
+raw 5 s poll series *is* preserved in `medoc_events.csv`, so exact timestamp
+matching is possible in post-hoc analysis.
 
 ### 8.2 Backward-compatible cue reconstruction
 
-`find_cues` supports two event formats: new sessions with explicit
+Cue parsing supports two event formats: new sessions with explicit
 `go_cue`/`stop_cue` events (carrying per-segment `temperature_celsius`), and
 legacy sessions where only `trial_start` + `go_durations` were logged — in
-which case cue times are reconstructed assuming even STOP spacing
-(`process.py:310`). Earlier-collected data remains analyzable.
+which case cue times are reconstructed assuming even STOP spacing.
+Earlier-collected data remains analyzable.
 
 ### 8.3 GO acoustic context windows
 
 Feature extraction expands each GO segment by **+/-0.35 s** of acoustic
 context (to capture onset/frication transients), merges overlapping expanded
 intervals, then applies **10 s sliding windows with 1 s hop** plus a tail
-window (`features.py:17`, `process.py:652`). This balances temporal resolution
-against the minimum duration openSMILE needs for stable Functionals.
+window (`features.py:17`). This balances temporal resolution against the
+minimum duration openSMILE needs for stable Functionals.
 
-## 9. ML segmentation (`scripts/ml_segmenter.py`)
+## 9. ML segmentation
 
-To prepare per-segment clips for the pain CNN:
-
-- Slices each trial WAV into individual **GO segments** using `go_cue`
-  timestamps from `events.csv`, resampled to 16 kHz.
-- Writes `segment_XXXX.wav` clips plus `segments.csv` with columns:
-  `source_file, trial_instance_id, audio_type, segment_index,
-  segment_filename, start_sec, end_sec, duration_sec, temperature_celsius,
-  pain`.
-- `temperature_celsius` is auto-filled from the GO-cue event data; `pain` is
-  left **blank for manual 1-10 rating** before CNN analysis.
+ML segmentation (slicing merged audio into per-GO segments for the pain CNN)
+is being rebuilt. The previous `scripts/ml_segmenter.py` has been retired.
+This section will be updated when the new pipeline is complete.
 
 ## 10. Pain prediction CNNs
 
 Two pretrained models evaluate the GO segments against manually entered 1-10
-pain ratings.
+pain ratings. Both scripts have been retired to `scripts/old/` but remain
+documented here for reference.
 
-### 10.1 Regression CNN — `scripts/cnn_analyze.py` (PyTorch `SimpleCNN`)
+### 10.1 Regression CNN — `scripts/old/cnn_analyze.py` (PyTorch `SimpleCNN`)
 
 - **Architecture** (617,921 params, `portable_pain_cnn/model.py`):
   Conv2d(1->32,3x3)+BN+ReLU+MaxPool(2,2) -> Conv2d(32->64,3x3)+BN+ReLU+
@@ -411,7 +413,7 @@ pain ratings.
   classification confusion matrix; **per-modality** (vowel vs speech)
   breakdown; predicted-vs-true and Bland-Altman plots.
 
-### 10.2 3-class CNN — `scripts/cnn3_analyze.py` (Keras `pain_cnn_model.h5`)
+### 10.2 3-class CNN — `scripts/old/cnn3_analyze.py` (Keras `pain_cnn_model.h5`)
 
 - **Input:** `(1, 64, 63, 1)` log-mel; `sr=16000, n_mels=64, n_fft=2048,
   hop_length=1024, duration=4.0 s` (padded/truncated to exactly 64,000
@@ -433,8 +435,8 @@ should be disclosed.
 ### 10.4 Small-N caveat
 
 Both analyzers print a warning when <10 segments are evaluated and note that
-metrics may be unstable (`cnn3_analyze.py:764`, `cnn_analyze.py:789`). If the
-validation set is small, this should be disclosed.
+metrics may be unstable. If the validation set is small, this should be
+disclosed.
 
 ## 11. End-to-end workflow
 
@@ -445,11 +447,13 @@ setup_venv.{sh,bat} -> run_experiment.{sh,bat} -> main.py
         -> data/<timestamp>_sub-..._task-{vowel|speech}/
             events.csv, trials.csv, medoc_events.csv, config.json, run.log, audio/*.wav
 
-python scripts/process.py            -> VAD + ComParE_2016 features (vowel & speech) + summary
-python scripts/ml_segmenter.py 001  -> ..._segments/segment_XXXX.wav + segments.csv
-   (manually fill segments.csv `pain` 1-10)
-python scripts/cnn_analyze.py  001  -> regression pain scores + agreement metrics
-python scripts/cnn3_analyze.py  001  -> 3-class (low/medium/high) metrics + confusion matrices
+python scripts/organize_sessions.py data/p001
+   -> data/p001-processed/raw/                           (audit-trail copy)
+   -> data/p001-processed/merged_task-{speech|vowel}/   (single pipeline input)
+       audio/, events.csv, medoc_events.csv, trials.csv, config.json,
+       participant_info.json, merge_report.json
+
+   (segmentation + CNN evaluation in progress; fill participant_info.json initializing temps)
 ```
 
 ## 12. Reproducibility and integrity
