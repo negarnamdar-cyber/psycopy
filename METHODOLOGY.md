@@ -342,9 +342,17 @@ across multiple timestamped folders (each with a different session ID).
 - **Renames audio** with session IDs to prevent collisions
   (`sub-P_session-S_block-N_trial-NNN.wav`).
 - **Consolidates demographics** (`age`, `sex`, `ethnicity`, `first_language`)
-  from whichever session has them into `participant_info.json` + `config.json`.
-- **Adds 4 blank initializing-temp fields** to `participant_info.json` for
-  manual entry.
+  from whichever session has them once into a shared top-level
+  `participant_info.json` (demographics only) + per-task `config.json`.
+- **Writes `questionnaires.csv`** (shared, top-level) with a blank `value`
+  column for fast manual entry of initializing temps + PCS + PANAS scores
+  (down-arrow through the column instead of clicking around in JSON).
+- **Writes `pain_ratings_{task}.csv`** (top-level, named per task so speech and
+  vowel stay distinct) with one row per GO segment: cross-reference keys
+  (`trial_instance_id` + `segment_index` + `go_id`) and associated
+  temperatures (`temp_at_go_celsius`) are pre-filled, plus `wav_filename` to
+  join to the merged audio. The trailing `pain_rating` column is blank for
+  manual entry (one rating per GO segment).
 - Copies originals to `pxx-processed/raw/` as an audit trail.
 - Writes `merge_report.json` with per-trial provenance, WAV duration,
   medoc-present flag, warnings, and gaps.
@@ -449,11 +457,12 @@ setup_venv.{sh,bat} -> run_experiment.{sh,bat} -> main.py
 
 python scripts/organize_sessions.py data/p001
    -> data/p001-processed/raw/                           (audit-trail copy)
+   -> data/p001-processed/                                 (shared per-participant)
+        participant_info.json, questionnaires.csv, pain_ratings_{speech|vowel}.csv
    -> data/p001-processed/merged_task-{speech|vowel}/   (single pipeline input)
-       audio/, events.csv, medoc_events.csv, trials.csv, config.json,
-       participant_info.json, merge_report.json
+        audio/, events.csv, medoc_events.csv, trials.csv, config.json, merge_report.json
 
-   (segmentation + CNN evaluation in progress; fill participant_info.json initializing temps)
+   (segmentation + CNN evaluation in progress; fill questionnaires.csv initializing temps)
 ```
 
 ## 12. Reproducibility and integrity

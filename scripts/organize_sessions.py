@@ -14,7 +14,11 @@ Layout produced::
         {ts}_sub-001_session-01_task-vowel/
 
     data/p001-processed/                # everything processed lives here
-        raw/                             # audit-trail copy of originals
+        participant_info.json          # shared demographics (one per participant)
+        questionnaires.csv             # shared blank scores (temps + PCS + PANAS)
+        pain_ratings_speech.csv        # speech GO segments; blank pain_rating
+        pain_ratings_vowel.csv         # vowel GO segments; blank pain_rating
+        raw/                           # audit-trail copy of originals
             {ts}_sub-001_session-01_task-speech/
             ...
         merged_task-speech/             # organize output -> downstream pipeline input
@@ -478,6 +482,149 @@ _QUESTIONNAIRE_REFERENCE: dict[str, Any] = {
 }
 
 
+def _subscale_of(item_num: int, subscales: dict[str, list[int]]) -> str:
+    """Return the readable subscale name an item belongs to, or ''."""
+    for name, items in subscales.items():
+        if item_num in items:
+            return name.replace("_", " ")
+    return ""
+
+
+def _questionnaire_rows() -> list[tuple[str, str, str]]:
+    """Build ``(field, value, note)`` rows for hand-entry into questionnaires.csv.
+
+    The middle ``value`` column is left blank so you can open the CSV in a
+    spreadsheet, click the first empty cell, and arrow straight down the column
+    typing one score per row.
+    """
+    rows: list[tuple[str, str, str]] = []
+    pcs_subs = _QUESTIONNAIRE_REFERENCE["pcs"]["subscales"]
+    panas_subs = _QUESTIONNAIRE_REFERENCE["panas"]["subscales"]
+
+    for temp_field in _INITIALIZING_TEMP_FIELDS:
+        rows.append((temp_field, "", "Celsius (hand-recorded initializing temp)"))
+    for i in range(1, 14):
+        rows.append((f"pcs_{i}", "", f"0-4 ({_subscale_of(i, pcs_subs)})"))
+    for i in range(1, 21):
+        rows.append((f"panas_{i}", "", f"1-5 ({_subscale_of(i, panas_subs)})"))
+    return rows
+
+
+def write_questionnaire_csv(path: Path) -> int:
+    """Write a blank questionnaires.csv for fast manual score entry.
+
+    Returns the number of data rows written.
+    """
+    rows = _questionnaire_rows()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["field", "value", "note"])
+        writer.writerows(rows)
+    return len(rows)
+
+
+# Columns for pain_ratings.csv.  Everything but the trailing ``pain_rating``
+# is pre-filled from the experiment logs so the file is a drop-in join table for
+# downstream ML: ``trial_instance_id`` + ``segment_index`` (or ``go_id``) join
+# to events.csv / medoc_events.csv / trials.csv, and ``wav_filename`` joins to
+# the merged audio dir.
+_PAIN_RATING_COLUMNS = (
+    "participant",
+    "task",
+    "session",
+    "trial_instance_id",
+    "block",
+    "segment_index",
+    "go_id",
+    "go_duration_sec",
+    "trial_elapsed_sec",
+    "temp_at_go_celsius",
+    "pain_rating",
+    "wav_filename",
+)
+
+
+def _fmt_temp(value: Any) -> str:
+    """Format a temperature float as a string, or '' when absent."""
+    if value is None or value == "":
+        return ""
+    try:
+        return f"{float(value):.1f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _build_pain_rating_rows(
+    folders: list[SessionFolder],
+    participant: str,
+    task: str,
+    renamed: dict[str, str],
+) -> list[dict[str, str]]:
+    """One row per GO segment across all source folders, for pain_ratings.csv.
+
+    Cross-reference columns are pre-filled from the ``go_cue`` events;
+    ``pain_rating`` is left blank for manual entry (one rating per GO segment).
+    """
+    go_rows: dict[tuple[str, str], dict[str, str]] = {}
+
+    for folder in folders:
+        events = _load_csv_rows(folder.path / "events.csv")
+        for row in events:
+            et = row.get("event_type", "").strip()
+            tid = row.get("trial_instance_id", "").strip()
+            if not tid:
+                continue
+            data = _parse_event_data(row.get("event_data", ""))
+            seg = data.get("segment_index")
+            seg_key = str(seg) if seg is not None else ""
+            key = (tid, seg_key)
+
+            if et == "go_cue":
+                # First-seen wins (matches index_trials union semantics).
+                if key in go_rows:
+                    continue
+                go_id = f"{tid}_go{int(seg):03d}" if seg is not None else f"{tid}_go"
+                go_rows[key] = {
+                    "participant": participant,
+                    "task": task,
+                    "session": folder.session,
+                    "trial_instance_id": tid,
+                    "block": row.get("block", "").strip(),
+                    "segment_index": seg_key,
+                    "go_id": go_id,
+                    "go_duration_sec": "" if data.get("cue_duration_sec") is None
+                        else str(data["cue_duration_sec"]),
+                    "trial_elapsed_sec": "" if data.get("trial_elapsed_sec") is None
+                        else str(data["trial_elapsed_sec"]),
+                    "temp_at_go_celsius": _fmt_temp(data.get("temperature_celsius")),
+                    "wav_filename": renamed.get(tid, ""),
+                    "pain_rating": "",
+                }
+
+    rows = list(go_rows.values())
+    rows.sort(
+        key=lambda r: (
+            r["session"],
+            r["trial_instance_id"],
+            int(r["segment_index"]) if r["segment_index"] else 0,
+        )
+    )
+    return rows
+
+
+def write_pain_ratings_csv(
+    path: Path, rows: list[dict[str, str]]
+) -> int:
+    """Write pain_ratings.csv; the trailing ``pain_rating`` column is blank."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=_PAIN_RATING_COLUMNS, quoting=csv.QUOTE_ALL)
+        writer.writeheader()
+        writer.writerows(rows)
+    return len(rows)
+
+
 def _consolidate_config(
     folders: list[SessionFolder],
 ) -> tuple[dict[str, Any] | None, dict[str, Any], list[str]]:
@@ -552,16 +699,6 @@ def _consolidate_config(
             ", ".join(missing),
         )
 
-    # Add blank initializing temp fields for manual entry
-    for temp_field in _INITIALIZING_TEMP_FIELDS:
-        participant_info[temp_field] = ""
-
-    # Add blank questionnaire fields for manual entry from paper forms
-    for pcs_field in _PCS_ITEMS:
-        participant_info[pcs_field] = ""
-    for panas_field in _PANAS_ITEMS:
-        participant_info[panas_field] = ""
-
     return merged_config, participant_info, sources
 
 
@@ -569,10 +706,16 @@ def merge_task_group(
     task: str,
     folders: list[SessionFolder],
     processed_dir: Path,
+    participant_info: dict[str, Any],
+    demo_sources: list[str],
     expected_blocks: int = _EXPECTED_BLOCKS,
     dry_run: bool = False,
 ) -> Path:
     """Merge all session folders for one task into a single merged directory.
+
+    Shared per-participant data (``participant_info`` + ``demo_sources``) is
+    consolidated once across all tasks by the caller and passed in here, so it
+    is only written to the top-level processed dir, not duplicated per task.
 
     Returns the path to the merged directory (or the would-be path on dry run).
     """
@@ -580,18 +723,24 @@ def merge_task_group(
 
     trials, gaps = index_trials(folders, expected_blocks=expected_blocks)
 
-    # Consolidate demographics from all session configs
-    merged_config, participant_info, demo_sources = _consolidate_config(folders)
+    # Task-specific base config (demographics are shared via participant_info)
+    merged_config, _, _ = _consolidate_config(folders)
+
+    participant = folders[0].participant if folders else ""
+
+    # One row per GO segment for pain_ratings.csv (manual pain entry).
+    go_rows = _build_pain_rating_rows(folders, participant, task, renamed={})
 
     # Build report
     report: dict[str, Any] = {
         "task": task,
-        "participant": folders[0].participant if folders else "",
+        "participant": participant,
         "source_folders": [f.path.name for f in folders],
         "merged_dir": str(merged_dir),
         "num_source_folders": len(folders),
         "num_trials_recovered": len(trials),
         "num_gaps": len(gaps),
+        "num_go_segments": len(go_rows),
         "participant_info": participant_info,
         "participant_info_sources": demo_sources,
         "trials": [_trial_info_to_dict(t) for t in trials],
@@ -620,22 +769,28 @@ def merge_task_group(
     report["audio_renamed"] = renamed
     logger.info("Copied %d audio files", len(renamed))
 
-    # Write consolidated config.json + standalone participant_info.json
+    # Write consolidated config.json (participant_info.json + questionnaires.csv
+    # are written once at the top-level processed dir by the caller, since they
+    # are shared across tasks).
     if merged_config is not None:
         config_path = merged_dir / "config.json"
         config_path.write_text(json.dumps(merged_config, indent=2), encoding="utf-8")
         report["config_source"] = "consolidated from all sessions"
         logger.info("Wrote consolidated config.json with merged demographics")
 
-        info_path = merged_dir / "participant_info.json"
-        info_data = {
-            **participant_info,
-            "_questionnaire_reference": _QUESTIONNAIRE_REFERENCE,
-        }
-        info_path.write_text(
-            json.dumps(info_data, indent=2), encoding="utf-8"
-        )
-        logger.info("Wrote participant_info.json")
+    # Write pain_ratings_{task}.csv at the top-level processed dir: one row per
+    # GO segment with the cross-reference keys + associated temperatures
+    # pre-filled and a blank trailing pain_rating column.  Named per task so
+    # speech and vowel ratings stay distinct.  Open it in a spreadsheet, click
+    # the first pain_rating cell, and arrow straight down the column typing one
+    # rating per GO.
+    for r in go_rows:
+        r["wav_filename"] = renamed.get(r["trial_instance_id"], "")
+    pain_path = processed_dir / f"pain_ratings_{task}.csv"
+    pcount = write_pain_ratings_csv(pain_path, go_rows)
+    report["pain_ratings_path"] = str(pain_path)
+    report["pain_rating_rows"] = pcount
+    logger.info("Wrote %s (%d GO segments, blank pain_rating)", pain_path.name, pcount)
 
     # Write report
     report_path = merged_dir / "merge_report.json"
@@ -776,10 +931,31 @@ def main(argv: list[str] | None = None) -> int:
     logger.info("Copying %d original folders to %s", len(all_folders), raw_dest)
     copy_originals(all_folders, raw_dest, dry_run=args.dry_run)
 
-    # Merge each task group
+    # Shared, per-participant data (demographics + questionnaires) is the same
+    # across tasks, so consolidate it once from all folders and write it to the
+    # top-level processed dir instead of duplicating it per merged_task-*.
+    _, participant_info, demo_sources = _consolidate_config(all_folders)
+    if not args.dry_run:
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        info_path = processed_dir / "participant_info.json"
+        info_path.write_text(json.dumps(participant_info, indent=2), encoding="utf-8")
+        logger.info("Wrote shared participant_info.json")
+
+        qcount = write_questionnaire_csv(processed_dir / "questionnaires.csv")
+        logger.info("Wrote shared questionnaires.csv (%d blank rows)", qcount)
+
+    # Merge each task group (pain_ratings_{task}.csv is written here, named per
+    # task so speech and vowel ratings stay distinct).
     for task, task_folders in groups.items():
         logger.info("Merging task=%s (%d source folders)", task, len(task_folders))
-        merge_task_group(task, task_folders, processed_dir, dry_run=args.dry_run)
+        merge_task_group(
+            task,
+            task_folders,
+            processed_dir,
+            participant_info,
+            demo_sources,
+            dry_run=args.dry_run,
+        )
 
     logger.info("Done. Output: %s", processed_dir)
     return 0
